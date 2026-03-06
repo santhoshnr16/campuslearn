@@ -22,6 +22,7 @@ from app.schemas.test import (
     TestSubmissionResponse,
     TestPerformanceResponse,
     GenerateTestRequest,
+    StreamingExamSubmit,
 )
 
 router = APIRouter()
@@ -347,3 +348,96 @@ async def submit_student_test(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# ========================
+# Student: Streaming Exam (Real-time question generation)
+# ========================
+
+@router.post("/student/{test_id}/stream-exam")
+async def start_streaming_exam(
+    test_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Start a streaming exam with real-time question generation via SSE.
+    
+    Questions are generated one-at-a-time using the RAG pipeline.
+    Returns Server-Sent Events (SSE) stream with:
+      - exam_started: Initial metadata
+      - question_ready: Each question as generated
+      - exam_complete: When all questions are done
+      - generation_error: If something goes wrong
+    """
+    from fastapi.responses import StreamingResponse
+    
+    service = TestService(db)
+    
+    return StreamingResponse(
+        service.stream_exam_questions(test_id, current_user.id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.post("/student/stream-exam/submit")
+async def submit_streaming_exam(
+    data: StreamingExamSubmit,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Submit answers for a streaming exam session.
+    Returns score, XP earned, and result details.
+    """
+    service = TestService(db)
+    try:
+        return await service.submit_streaming_exam(
+            exam_session_id=data.exam_session_id,
+            student_id=current_user.id,
+            answers=[a.model_dump(mode="json") for a in data.answers],
+            total_time_seconds=data.total_time_seconds,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# ========================
+# Teacher: Exam Sessions History
+# ========================
+
+@router.get("/{test_id}/exam-sessions")
+async def get_test_exam_sessions(
+    test_id: UUID,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    status: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Get all streaming exam sessions for a test (teacher view).
+    
+    Returns paginated list of exam sessions with:
+      - Student info
+      - Generated questions with correct answers
+      - Student's answers and score
+      - Timestamps
+    """
+    require_teacher(current_user)
+    service = TestService(db)
+    try:
+        return await service.get_exam_sessions(
+            test_id=test_id,
+            teacher_id=current_user.id,
+            page=page,
+            page_size=page_size,
+            status_filter=status,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))

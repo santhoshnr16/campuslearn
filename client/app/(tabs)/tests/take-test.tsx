@@ -3,7 +3,7 @@
  * Features: 3...2...1...GO! countdown, react-native-reanimated 120fps animations,
  * haptic feedback, AI Tutor feedback, celebration effects
  */
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
     View,
     Text,
@@ -31,7 +31,7 @@ import ReAnimated, {
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { Colors, Spacing, FontSizes, BorderRadius } from '@/constants/theme';
 import { IconSymbol } from '@/components/ui/icon-symbol';
-import { testsService } from '@/services/tests';
+import { testsService, ExamQuestionEvent, StreamingExamResult } from '@/services/tests';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -100,6 +100,15 @@ export default function TakeTestScreen() {
     const [levelOrder, setLevelOrder] = useState<DifficultyLevel[]>([]);
     const [currentLevelIndex, setCurrentLevelIndex] = useState(0);
     const [questionIndexInLevel, setQuestionIndexInLevel] = useState(0);
+
+    // SSE Streaming state
+    const [examSessionId, setExamSessionId] = useState<string | null>(null);
+    const [streamingQuestions, setStreamingQuestions] = useState<ExamQuestionEvent[]>([]);
+    const [isGenerating, setIsGenerating] = useState(false);
+    const [totalPlanned, setTotalPlanned] = useState(0);
+    const [generationComplete, setGenerationComplete] = useState(false);
+    const [waitingForNextQuestion, setWaitingForNextQuestion] = useState(false);
+    const sseRef = useRef<any>(null);
 
     // Reanimated shared values
     const countdownScale = useSharedValue(0);
@@ -236,53 +245,127 @@ export default function TakeTestScreen() {
         setTimeout(showNext, 200);
     }, []);
 
-    // Load test
+    // Load test via SSE streaming - questions generated in real-time
     useEffect(() => {
         if (!testId) return;
-        (async () => {
-            try {
-                const data = await testsService.getStudentTest(testId);
-                setTest(data);
-                
-                // Group questions by difficulty
-                const qs = data.questions || [];
-                const grouped = {
-                    easy: qs.filter((q: any) => q.difficulty_level === 'easy'),
-                    medium: qs.filter((q: any) => q.difficulty_level === 'medium'),
-                    hard: qs.filter((q: any) => q.difficulty_level === 'hard'),
-                };
-                
-                // Handle questions without difficulty level - put them in medium
-                const unassigned = qs.filter((q: any) => 
-                    !['easy', 'medium', 'hard'].includes(q.difficulty_level)
-                );
-                grouped.medium = [...grouped.medium, ...unassigned];
-                
-                setGroupedQuestions(grouped);
-                
-                // Determine level order (only include levels with questions)
-                const order: DifficultyLevel[] = [];
-                if (grouped.easy.length > 0) order.push('easy');
-                if (grouped.medium.length > 0) order.push('medium');
-                if (grouped.hard.length > 0) order.push('hard');
-                setLevelOrder(order);
-                
-                // Flatten questions in order: easy -> medium -> hard
-                const orderedQuestions = [
-                    ...grouped.easy,
-                    ...grouped.medium,
-                    ...grouped.hard,
-                ];
-                setQuestions(orderedQuestions);
-                
-                setIsLoading(false);
-                // Start countdown after load
-                setTimeout(() => startCountdown(), 300);
-            } catch (error: any) {
-                Alert.alert('Error', error?.response?.data?.detail || 'Failed to load test');
-                router.back();
+
+        setIsLoading(true);
+        setIsGenerating(true);
+        setGenerationComplete(false);
+        
+        // Start SSE streaming
+        const eventSource = testsService.startStreamingExam(testId, {
+            onExamStarted: (event) => {
+                setExamSessionId(event.exam_session_id);
+                setTotalPlanned(event.total_questions);
+                setTest({
+                    title: event.test_title,
+                    subject_name: event.subject_name,
+                    duration_minutes: event.duration_minutes,
+                    total_questions: event.total_questions,
+                });
+            },
+            onQuestionReady: (event) => {
+                // Add the new question to our streaming array
+                setStreamingQuestions(prev => {
+                    // Avoid duplicates
+                    if (prev.some(q => q.question_id === event.question_id)) {
+                        return prev;
+                    }
+                    const updated = [...prev, event];
+                    
+                    // If this is the first question, we can now start the countdown
+                    if (updated.length === 1) {
+                        // Update questions array for UI
+                        setQuestions(updated.map(q => ({
+                            question_id: q.question_id,
+                            question_text: q.question_text,
+                            question_type: q.question_type,
+                            options: q.options,
+                            difficulty_level: q.difficulty_level,
+                            marks: q.marks,
+                        })));
+                        
+                        // Group by difficulty
+                        const grouped = {
+                            easy: updated.filter(q => q.difficulty_level === 'easy'),
+                            medium: updated.filter(q => q.difficulty_level === 'medium'),
+                            hard: updated.filter(q => q.difficulty_level === 'hard'),
+                        };
+                        // Handle questions without difficulty
+                        const unassigned = updated.filter(q => 
+                            !['easy', 'medium', 'hard'].includes(q.difficulty_level || '')
+                        );
+                        grouped.medium = [...grouped.medium, ...unassigned];
+                        setGroupedQuestions(grouped);
+                        
+                        // Determine level order
+                        const order: DifficultyLevel[] = [];
+                        if (grouped.easy.length > 0) order.push('easy');
+                        if (grouped.medium.length > 0) order.push('medium');
+                        if (grouped.hard.length > 0) order.push('hard');
+                        setLevelOrder(order);
+                        
+                        setIsLoading(false);
+                        setTimeout(() => startCountdown(), 300);
+                    } else {
+                        // Update questions array for subsequent questions
+                        setQuestions(updated.map(q => ({
+                            question_id: q.question_id,
+                            question_text: q.question_text,
+                            question_type: q.question_type,
+                            options: q.options,
+                            difficulty_level: q.difficulty_level,
+                            marks: q.marks,
+                        })));
+                        
+                        // Re-group by difficulty
+                        const grouped = {
+                            easy: updated.filter(q => q.difficulty_level === 'easy'),
+                            medium: updated.filter(q => q.difficulty_level === 'medium'),
+                            hard: updated.filter(q => q.difficulty_level === 'hard'),
+                        };
+                        const unassigned = updated.filter(q => 
+                            !['easy', 'medium', 'hard'].includes(q.difficulty_level || '')
+                        );
+                        grouped.medium = [...grouped.medium, ...unassigned];
+                        setGroupedQuestions(grouped);
+                        
+                        // Update level order if needed
+                        const order: DifficultyLevel[] = [];
+                        if (grouped.easy.length > 0) order.push('easy');
+                        if (grouped.medium.length > 0) order.push('medium');
+                        if (grouped.hard.length > 0) order.push('hard');
+                        setLevelOrder(order);
+                        
+                        // If we were waiting for this question, clear the waiting state
+                        setWaitingForNextQuestion(false);
+                    }
+                    
+                    return updated;
+                });
+            },
+            onComplete: (totalGenerated) => {
+                setIsGenerating(false);
+                setGenerationComplete(true);
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            },
+            onError: (message, fallbackAvailable) => {
+                setIsGenerating(false);
+                Alert.alert('Generation Error', message, [
+                    { text: 'Go Back', onPress: () => router.back() },
+                ]);
+            },
+        });
+        
+        sseRef.current = eventSource;
+        
+        return () => {
+            // Cleanup SSE connection on unmount
+            if (sseRef.current) {
+                sseRef.current.close();
             }
-        })();
+        };
     }, [testId]);
 
     // Show first level interstitial after countdown
@@ -367,7 +450,20 @@ export default function TakeTestScreen() {
     };
 
     const goToQuestion = (newIndex: number) => {
-        if (newIndex < 0 || newIndex >= questions.length) return;
+        if (newIndex < 0) return;
+        
+        // In streaming mode, check if next question exists
+        if (newIndex >= questions.length) {
+            // If still generating, show waiting state
+            if (isGenerating && !generationComplete) {
+                setWaitingForNextQuestion(true);
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                return;
+            }
+            // If generation is complete, this is the last question
+            return;
+        }
+        
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         
         // Check if we're transitioning to a new level (only when going forward)
@@ -393,13 +489,23 @@ export default function TakeTestScreen() {
             }
             
             const opts = questions[newIndex]?.options || [];
+            // Update progress - in streaming mode, use totalPlanned if available
+            const total = totalPlanned || questions.length;
             progressWidth.value = withTiming(
-                ((newIndex + 1) / questions.length) * 100,
+                ((newIndex + 1) / total) * 100,
                 { duration: 400 }
             );
             animateQuestionEntry(opts.length);
         });
     };
+
+    // Effect to automatically go to next question when it becomes available
+    useEffect(() => {
+        if (waitingForNextQuestion && currentIndex + 1 < questions.length) {
+            setWaitingForNextQuestion(false);
+            goToQuestion(currentIndex + 1);
+        }
+    }, [questions.length, waitingForNextQuestion, currentIndex]);
 
     const selectAnswer = (questionId: string, optLetter: string) => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -431,7 +537,21 @@ export default function TakeTestScreen() {
                 selected_answer: sel,
                 time_taken_seconds: Math.round(elapsedSeconds / questions.length),
             }));
-            const res = await testsService.submitTest(testId, answerList, elapsedSeconds);
+            
+            let res: any;
+            
+            // Use streaming exam submit if we have an exam session
+            if (examSessionId) {
+                res = await testsService.submitStreamingExam(
+                    examSessionId,
+                    answerList.map(a => ({ question_id: a.question_id, selected_answer: a.selected_answer })),
+                    elapsedSeconds
+                );
+            } else {
+                // Fallback to regular submit
+                res = await testsService.submitTest(testId, answerList, elapsedSeconds);
+            }
+            
             setResult(res);
             setShowResult(true);
 
@@ -524,8 +644,16 @@ export default function TakeTestScreen() {
         return (
             <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
                 <View style={styles.centered}>
-                    <ActivityIndicator size="large" color={colors.primary} />
-                    <Text style={{ color: colors.textSecondary, marginTop: 12 }}>Loading test...</Text>
+                    <ReAnimated.View style={[{ alignItems: 'center' }, pulseStyle]}>
+                        <Text style={{ fontSize: 48, marginBottom: 16 }}>🧠</Text>
+                        <ActivityIndicator size="large" color={colors.primary} />
+                        <Text style={{ color: colors.text, marginTop: 16, fontSize: FontSizes.lg, fontWeight: '600', textAlign: 'center' }}>
+                            Generating your exam...
+                        </Text>
+                        <Text style={{ color: colors.textSecondary, marginTop: 8, fontSize: FontSizes.sm }}>
+                            AI is crafting personalized questions
+                        </Text>
+                    </ReAnimated.View>
                 </View>
             </SafeAreaView>
         );
@@ -551,7 +679,7 @@ export default function TakeTestScreen() {
                         {test?.title || 'Get Ready!'}
                     </Text>
                     <Text style={[styles.countdownMeta, { color: colors.textTertiary }]}>
-                        {questions.length} questions
+                        {totalPlanned || questions.length} questions · AI-powered exam ✨
                     </Text>
                 </ReAnimated.View>
             </SafeAreaView>
@@ -590,6 +718,31 @@ export default function TakeTestScreen() {
                         </View>
                     </ReAnimated.View>
                 </ReAnimated.View>
+            </SafeAreaView>
+        );
+    }
+
+    // ====== Waiting for Next Question (Streaming) ======
+    if (waitingForNextQuestion) {
+        return (
+            <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+                <View style={styles.centered}>
+                    <ReAnimated.View style={[{ alignItems: 'center' }, pulseStyle]}>
+                        <Text style={{ fontSize: 48, marginBottom: 16 }}>✨</Text>
+                        <ActivityIndicator size="large" color={colors.primary} />
+                        <Text style={{ color: colors.text, marginTop: 16, fontSize: FontSizes.lg, fontWeight: '600', textAlign: 'center' }}>
+                            Generating next question...
+                        </Text>
+                        <Text style={{ color: colors.textSecondary, marginTop: 8, fontSize: FontSizes.sm }}>
+                            Almost ready!
+                        </Text>
+                        <View style={{ marginTop: 20, alignItems: 'center' }}>
+                            <Text style={{ color: colors.textTertiary, fontSize: FontSizes.xs }}>
+                                Question {currentIndex + 2} of {totalPlanned || '...'}
+                            </Text>
+                        </View>
+                    </ReAnimated.View>
+                </View>
             </SafeAreaView>
         );
     }
@@ -782,8 +935,16 @@ export default function TakeTestScreen() {
                         </View>
                     )}
                     <Text style={{ fontSize: FontSizes.sm, color: colors.textSecondary }}>
-                        Question {currentIndex + 1} of {questions.length}
+                        Question {currentIndex + 1} of {totalPlanned || questions.length}
                     </Text>
+                    {isGenerating && !generationComplete && (
+                        <View style={[styles.generatingBadge, { backgroundColor: colors.success + '15' }]}>
+                            <ActivityIndicator size="small" color={colors.success} style={{ marginRight: 4, transform: [{ scale: 0.6 }] }} />
+                            <Text style={{ fontSize: FontSizes.xs - 1, fontWeight: '600', color: colors.success }}>
+                                AI generating...
+                            </Text>
+                        </View>
+                    )}
                 </View>
                 <View style={[styles.answeredBadge, { backgroundColor: colors.primary + '15' }]}>
                     <Text style={{ fontSize: FontSizes.xs, fontWeight: '600', color: colors.primary }}>
@@ -992,6 +1153,13 @@ const styles = StyleSheet.create({
         gap: 4,
         paddingHorizontal: 8,
         paddingVertical: 4,
+        borderRadius: BorderRadius.full,
+    },
+    generatingBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 8,
+        paddingVertical: 3,
         borderRadius: BorderRadius.full,
     },
     diffBadge: {

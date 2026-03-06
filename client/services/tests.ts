@@ -136,6 +136,95 @@ export interface GenerateResult {
   total_marks: number;
 }
 
+// =============================================================================
+// Streaming Exam Types (Real-time question generation via SSE)
+// =============================================================================
+
+export interface ExamStartedEvent {
+  exam_session_id: string;
+  test_title: string;
+  subject_name: string;
+  total_questions: number;
+  duration_minutes: number | null;
+}
+
+export interface ExamQuestionEvent {
+  index: number;
+  question_id: string;
+  question_text: string;
+  question_type: string;
+  options: string[] | null;
+  difficulty_level: string | null;
+  marks: number;
+  total_questions: number;
+}
+
+export interface StreamingExamCallbacks {
+  onExamStarted?: (data: ExamStartedEvent) => void;
+  onQuestionReady?: (data: ExamQuestionEvent) => void;
+  onComplete?: (totalGenerated: number) => void;
+  onError?: (message: string, fallbackAvailable: boolean) => void;
+}
+
+export interface StreamingExamResult {
+  exam_session_id: string;
+  score: number;
+  total_marks: number;
+  percentage: number;
+  correct_count: number;
+  total_questions: number;
+  xp_earned: number;
+  streak_days: number;
+  level_up: boolean;
+  new_level: number | null;
+  tutor_feedback: string | null;
+  answers: {
+    question_id: string;
+    selected_answer: string;
+    is_correct: boolean;
+    marks_obtained: number;
+    correct_answer: string;
+  }[];
+}
+
+export interface ExamSessionQuestionDetail {
+  question_id: string;
+  question_text: string;
+  options: string[] | null;
+  correct_answer: string | null;
+  student_answer: string | null;
+  is_correct: boolean | null;
+  difficulty_level: string | null;
+  marks: number;
+}
+
+export interface ExamSessionResponse {
+  id: string;
+  test_id: string;
+  student_id: string;
+  student_name: string | null;
+  student_username: string | null;
+  test_title: string;
+  subject_name: string;
+  status: string;
+  total_questions_planned: number;
+  total_questions_generated: number;
+  score: number | null;
+  total_marks: number | null;
+  percentage: number | null;
+  started_at: string;
+  completed_at: string | null;
+  questions: ExamSessionQuestionDetail[];
+}
+
+export interface ExamSessionListResponse {
+  items: ExamSessionResponse[];
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+}
+
 // Service
 
 export const testsService = {
@@ -245,6 +334,126 @@ export const testsService = {
       answers,
       total_time_seconds: totalTimeSeconds,
     });
+    return response.data;
+  },
+
+  // ========================
+  // Student: Streaming Exam (Real-time question generation)
+  // ========================
+
+  /**
+   * Start a streaming exam with real-time question generation via SSE.
+   * Questions are generated one-at-a-time as the student answers.
+   */
+  startStreamingExam(
+    testId: string,
+    callbacks: StreamingExamCallbacks
+  ): EventSource {
+    const EventSourceImpl = require('react-native-sse').default;
+    const { tokenStorage } = require('./api');
+
+    const token = tokenStorage.getAccessTokenSync?.() || '';
+    const baseURL = api.defaults.baseURL || '';
+
+    const eventSource = new EventSourceImpl(
+      `${baseURL}/tests/student/${testId}/stream-exam`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'Accept': 'text/event-stream',
+        },
+      }
+    );
+
+    eventSource.addEventListener('message', (event: any) => {
+      try {
+        const data = JSON.parse(event.data);
+        
+        switch (data.event) {
+          case 'exam_started':
+            callbacks.onExamStarted?.({
+              exam_session_id: data.exam_session_id,
+              test_title: data.test_title,
+              subject_name: data.subject_name,
+              total_questions: data.total_questions,
+              duration_minutes: data.duration_minutes,
+            });
+            break;
+          
+          case 'question_ready':
+            callbacks.onQuestionReady?.({
+              index: data.index,
+              question_id: data.question_id,
+              question_text: data.question_text,
+              question_type: data.question_type,
+              options: data.options,
+              difficulty_level: data.difficulty_level,
+              marks: data.marks,
+              total_questions: data.total_questions,
+            });
+            break;
+          
+          case 'exam_complete':
+            callbacks.onComplete?.(data.total_generated);
+            eventSource.close();
+            break;
+          
+          case 'generation_error':
+            callbacks.onError?.(data.message, data.fallback_available);
+            eventSource.close();
+            break;
+        }
+      } catch (e) {
+        console.error('Failed to parse SSE event:', e);
+      }
+    });
+
+    eventSource.addEventListener('error', (event: any) => {
+      callbacks.onError?.('Connection error', false);
+      eventSource.close();
+    });
+
+    return eventSource;
+  },
+
+  /**
+   * Submit answers for a streaming exam session.
+   */
+  async submitStreamingExam(
+    examSessionId: string,
+    answers: { question_id: string; selected_answer: string }[],
+    totalTimeSeconds?: number
+  ): Promise<StreamingExamResult> {
+    const response = await api.post<StreamingExamResult>('/tests/student/stream-exam/submit', {
+      exam_session_id: examSessionId,
+      answers,
+      total_time_seconds: totalTimeSeconds,
+    });
+    return response.data;
+  },
+
+  // ========================
+  // Teacher: Exam Sessions History
+  // ========================
+
+  /**
+   * Get all streaming exam sessions for a test (teacher view).
+   */
+  async getExamSessions(
+    testId: string,
+    page: number = 1,
+    pageSize: number = 20,
+    status?: string
+  ): Promise<ExamSessionListResponse> {
+    const params: Record<string, any> = { page, page_size: pageSize };
+    if (status) params.status = status;
+    
+    const response = await api.get<ExamSessionListResponse>(
+      `/tests/${testId}/exam-sessions`,
+      { params }
+    );
     return response.data;
   },
 };

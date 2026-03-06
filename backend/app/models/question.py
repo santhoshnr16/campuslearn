@@ -32,6 +32,9 @@ class Question(Base):
         UUID(as_uuid=True), ForeignKey("topics.id", ondelete="SET NULL"), nullable=True
     )
     session_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+    exam_session_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("exam_sessions.id", ondelete="SET NULL"), nullable=True
+    )
     
     # Question content
     question_text: Mapped[str] = mapped_column(Text, nullable=False)

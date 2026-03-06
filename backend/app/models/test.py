@@ -155,3 +155,55 @@ class TestSubmission(Base):
     __table_args__ = (
         UniqueConstraint("test_id", "student_id", name="uq_test_student_submission"),
     )
+
+
+class ExamSession(Base):
+    """
+    Streaming exam session for on-demand question generation.
+    
+    When a student starts a streaming exam, questions are generated one-at-a-time
+    via SSE. This model tracks the session state, generated questions, and results.
+    """
+
+    __tablename__ = "exam_sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    test_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tests.id", ondelete="CASCADE"), nullable=False
+    )
+    student_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    subject_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False
+    )
+
+    # Session status: in_progress, completed, abandoned
+    status: Mapped[str] = mapped_column(String(20), default="in_progress")
+    
+    # Question tracking
+    total_questions_planned: Mapped[int] = mapped_column(Integer, default=10)
+    total_questions_generated: Mapped[int] = mapped_column(Integer, default=0)
+    
+    # JSON array of generated question UUIDs in order
+    question_ids: Mapped[list] = mapped_column(JSONB, default=list)
+    
+    # Student's answers: [{"question_id": "...", "selected_answer": "A", "is_correct": true}]
+    answers: Mapped[Optional[dict]] = mapped_column(JSONB)
+    
+    # Scoring
+    score: Mapped[Optional[int]] = mapped_column(Integer)
+    total_marks: Mapped[Optional[int]] = mapped_column(Integer)
+
+    # Timestamps
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    # Relationships
+    test = relationship("Test")
+    student = relationship("User")
+    subject = relationship("Subject")

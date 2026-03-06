@@ -944,6 +944,7 @@ Output valid JSON only."""
         chunks: Optional[List[DocumentChunk]] = None,
         subject_id: Optional[uuid.UUID] = None,
         topic_id: Optional[uuid.UUID] = None,
+        exam_session_id: Optional[uuid.UUID] = None,
     ) -> tuple[Question, QuestionResponse]:
         """
         Save generated question to database after validation.
@@ -988,6 +989,7 @@ Output valid JSON only."""
             session_id=session_id,
             subject_id=subject_id,
             topic_id=topic_id,
+            exam_session_id=exam_session_id,
             question_text=question_data["question_text"],
             question_embedding=question_embedding,
             question_type=question_type,
@@ -999,6 +1001,7 @@ Output valid JSON only."""
             topic_tags=question_data.get("topic_tags"),
             source_chunk_ids=chunk_ids,
             generation_confidence=confidence_score,  # Calculated from validation
+            vetting_status="approved",  # Auto-approve all generated questions
             generation_metadata={
                 "raw_response": question_data,
                 "source_info": source_info,
@@ -1581,6 +1584,7 @@ Output valid JSON only."""
             topic_tags=question_data.get("topic_tags"),
             source_chunk_ids=chunk_ids,
             generation_confidence=confidence_score,
+            vetting_status="approved",  # Auto-approve all generated questions
             # Novelty metadata
             novelty_score=novelty_result.novelty_score,
             max_similarity=novelty_result.max_similarity,
