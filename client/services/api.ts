@@ -47,6 +47,9 @@ console.log('[API] USE_SIMULATOR flag:', isSimulator());
 const ACCESS_TOKEN_KEY = 'qgen_access_token';
 const REFRESH_TOKEN_KEY = 'qgen_refresh_token';
 
+// In-memory cache for synchronous access (needed for SSE connections)
+let cachedAccessToken: string | null = null;
+
 // Create axios instance
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -58,14 +61,23 @@ export const apiClient = axios.create({
 
 // Token management functions
 export const tokenStorage = {
+  // Synchronous getter for SSE connections (uses cached value)
+  getAccessTokenSync(): string | null {
+    return cachedAccessToken;
+  },
+
   async getAccessToken(): Promise<string | null> {
     try {
       // Try SecureStore first (native)
       if (Platform.OS !== 'web' && SecureStore.getItemAsync) {
-        return await SecureStore.getItemAsync(ACCESS_TOKEN_KEY);
+        const token = await SecureStore.getItemAsync(ACCESS_TOKEN_KEY);
+        cachedAccessToken = token;
+        return token;
       }
       // Fallback to AsyncStorage (web/simulator)
-      return await AsyncStorage.getItem(ACCESS_TOKEN_KEY);
+      const token = await AsyncStorage.getItem(ACCESS_TOKEN_KEY);
+      cachedAccessToken = token;
+      return token;
     } catch (error) {
       console.warn('[TokenStorage] Failed to get access token:', error);
       return null;
@@ -86,6 +98,9 @@ export const tokenStorage = {
 
   async setTokens(accessToken: string, refreshToken: string): Promise<void> {
     try {
+      // Update in-memory cache immediately
+      cachedAccessToken = accessToken;
+      
       if (Platform.OS !== 'web' && SecureStore.setItemAsync) {
         await SecureStore.setItemAsync(ACCESS_TOKEN_KEY, accessToken);
         await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, refreshToken);
@@ -101,6 +116,9 @@ export const tokenStorage = {
 
   async clearTokens(): Promise<void> {
     try {
+      // Clear in-memory cache immediately
+      cachedAccessToken = null;
+      
       if (Platform.OS !== 'web' && SecureStore.deleteItemAsync) {
         await SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY);
         await SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY);

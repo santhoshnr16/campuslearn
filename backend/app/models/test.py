@@ -170,8 +170,13 @@ class ExamSession(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    test_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("tests.id", ondelete="CASCADE"), nullable=False
+    # test_id is nullable for chapter-based AI tests (topic_id used instead)
+    test_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tests.id", ondelete="CASCADE"), nullable=True
+    )
+    # topic_id for chapter-based AI-generated tests
+    topic_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("topics.id", ondelete="CASCADE"), nullable=True
     )
     student_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
@@ -205,5 +210,6 @@ class ExamSession(Base):
 
     # Relationships
     test = relationship("Test")
+    topic = relationship("Topic")
     student = relationship("User")
     subject = relationship("Subject")

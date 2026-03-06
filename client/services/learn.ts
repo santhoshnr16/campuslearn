@@ -163,6 +163,51 @@ export interface HeartsData {
   max_hearts: number;
 }
 
+// Streaming Chapter Test Types
+
+export interface ChapterExamStartedEvent {
+  exam_session_id: string;
+  topic_name: string;
+  subject_name: string;
+  total_questions: number;
+}
+
+export interface ChapterQuestionEvent {
+  index: number;
+  question_id: string;
+  question_text: string;
+  question_type: string;
+  options: string[] | null;
+  difficulty_level: string | null;
+  marks: number;
+  total_questions: number;
+}
+
+export interface StreamingChapterCallbacks {
+  onExamStarted?: (data: ChapterExamStartedEvent) => void;
+  onQuestionReady?: (data: ChapterQuestionEvent) => void;
+  onComplete?: (totalGenerated: number) => void;
+  onError?: (message: string) => void;
+}
+
+export interface ChapterTestResult {
+  exam_session_id: string;
+  score: number;
+  total_marks: number;
+  total_questions: number;
+  correct_answers: number;
+  accuracy: number;
+  xp_earned: number;
+  tutor_feedback?: string;
+  results: {
+    question_id: string;
+    selected_answer: string;
+    correct_answer: string;
+    is_correct: boolean;
+    marks: number;
+  }[];
+}
+
 // API Methods
 
 const learnService = {
@@ -257,6 +302,167 @@ const learnService = {
     const { data } = await api.get('/learn/hearts');
     return data;
   },
+
+  // ========================
+  // Streaming Chapter Tests
+  // ========================
+
+  /**
+   * Start a streaming chapter test with real-time question generation via SSE.
+   * Questions are generated one-at-a-time as the student answers.
+   */
+  startStreamingChapterTest(
+    subjectId: string,
+    topicId: string,
+    count: number,
+    callbacks: StreamingChapterCallbacks
+  ): any {
+    const EventSourceImpl = require('react-native-sse').default;
+    const { tokenStorage } = require('./api');
+
+    const token = tokenStorage.getAccessTokenSync?.() || '';
+    const baseURL = api.defaults.baseURL || '';
+
+    const eventSource = new EventSourceImpl(
+      `${baseURL}/learn/chapter/${subjectId}/stream?topic_id=${topicId}&count=${count}`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'Accept': 'text/event-stream',
+        },
+      }
+    );
+
+    eventSource.addEventListener('message', (event: any) => {
+      try {
+        const data = JSON.parse(event.data);
+        
+        switch (data.event) {
+          case 'exam_started':
+            callbacks.onExamStarted?.({
+              exam_session_id: data.exam_session_id,
+              topic_name: data.topic_name,
+              subject_name: data.subject_name,
+              total_questions: data.total_questions,
+            });
+            break;
+          
+          case 'question_ready':
+            callbacks.onQuestionReady?.({
+              index: data.index,
+              question_id: data.question_id,
+              question_text: data.question_text,
+              question_type: data.question_type,
+              options: data.options,
+              difficulty_level: data.difficulty_level,
+              marks: data.marks,
+              total_questions: data.total_questions,
+            });
+            break;
+          
+          case 'exam_complete':
+            callbacks.onComplete?.(data.total_generated);
+            eventSource.close();
+            break;
+          
+          case 'generation_error':
+            callbacks.onError?.(data.message || 'Question generation failed');
+            eventSource.close();
+            break;
+        }
+      } catch (e) {
+        console.error('SSE parse error:', e);
+      }
+    });
+
+    eventSource.addEventListener('error', (error: any) => {
+      console.error('SSE error:', error);
+      callbacks.onError?.('Connection lost');
+      eventSource.close();
+    });
+
+    return eventSource;
+  },
+
+  /**
+   * Submit answers for a streaming chapter test.
+   */
+  async submitChapterTest(
+    examSessionId: string,
+    answers: { question_id: string; selected_answer: string }[],
+    totalTimeSeconds?: number
+  ): Promise<ChapterTestResult> {
+    const params = new URLSearchParams();
+    params.append('exam_session_id', examSessionId);
+    if (totalTimeSeconds) params.append('total_time_seconds', totalTimeSeconds.toString());
+    
+    const { data } = await api.post(`/learn/chapter/submit?${params.toString()}`, answers);
+    return data;
+  },
+
+  // ========================
+  // Teacher: Chapter Test Sessions
+  // ========================
+
+  /**
+   * Get chapter test sessions for a subject (teacher view).
+   */
+  async getChapterSessions(
+    subjectId: string,
+    options?: {
+      topicId?: string;
+      page?: number;
+      pageSize?: number;
+      status?: string;
+    }
+  ): Promise<{
+    items: ChapterSessionResponse[];
+    total: number;
+    page: number;
+    page_size: number;
+    total_pages: number;
+  }> {
+    const params: Record<string, string | number> = {};
+    if (options?.topicId) params.topic_id = options.topicId;
+    if (options?.page) params.page = options.page;
+    if (options?.pageSize) params.page_size = options.pageSize;
+    if (options?.status) params.status = options.status;
+    
+    const { data } = await api.get(`/learn/teacher/chapter-sessions/${subjectId}`, { params });
+    return data;
+  },
 };
+
+// Response types for teacher endpoints
+export interface ChapterSessionQuestion {
+  question_id: string;
+  question_text: string;
+  options: string[] | null;
+  correct_answer: string | null;
+  student_answer: string | null;
+  is_correct: boolean | null;
+  difficulty_level: string | null;
+  marks: number;
+}
+
+export interface ChapterSessionResponse {
+  id: string;
+  student_id: string;
+  student_name: string | null;
+  student_username: string | null;
+  topic_id: string | null;
+  topic_name: string;
+  status: string;
+  total_questions_planned: number;
+  total_questions_generated: number;
+  score: number | null;
+  total_marks: number | null;
+  percentage: number | null;
+  started_at: string | null;
+  completed_at: string | null;
+  questions: ChapterSessionQuestion[];
+}
 
 export default learnService;

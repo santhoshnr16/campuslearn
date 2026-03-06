@@ -1048,3 +1048,372 @@ class GamificationService:
             }
             for p, name in rows
         ]
+
+    # --- Streaming Chapter Tests ---
+
+    async def stream_chapter_questions(
+        self, 
+        student_id: UUID, 
+        subject_id: UUID, 
+        topic_id: UUID, 
+        topic_name: str,
+        question_count: int = 5,
+    ):
+        """
+        Generate questions one-at-a-time via SSE for a chapter-based AI test.
+        
+        Yields JSON events:
+          - exam_started: Initial metadata
+          - question_ready: Each question as it's generated
+          - exam_complete: All questions generated
+          - generation_error: If something goes wrong
+        """
+        import json
+        from app.models.document import Document, DocumentChunk
+        from app.models.test import ExamSession
+        from app.models.question import Question, GenerationSession
+        from app.services.question_service import QuestionGenerationService
+        from app.services.embedding_service import EmbeddingService
+        from app.services.llm_service import LLMService
+        from app.services.redis_service import RedisService
+        from app.services.document_service import DocumentService
+        from app.services.reranker_service import RerankerService
+        from app.core.config import settings
+
+        # Get subject name
+        subject = await self.db.get(Subject, subject_id)
+        if not subject:
+            yield f"data: {json.dumps({'event': 'generation_error', 'message': 'Subject not found'})}\n\n"
+            return
+
+        # Find topic's documents
+        topic = await self.db.get(Topic, topic_id)
+        if not topic:
+            yield f"data: {json.dumps({'event': 'generation_error', 'message': 'Topic not found'})}\n\n"
+            return
+
+        # Find documents for this subject (we'll use topic-specific chunks where available)
+        doc_result = await self.db.execute(
+            select(Document).where(
+                and_(
+                    Document.subject_id == subject_id,
+                    Document.processing_status == "completed",
+                )
+            ).order_by(Document.upload_timestamp.desc())
+        )
+        documents = doc_result.scalars().all()
+
+        if not documents:
+            yield f"data: {json.dumps({'event': 'generation_error', 'message': 'No documents found for this subject'})}\n\n"
+            return
+
+        primary_doc = documents[0]
+
+        # Get chunks filtered by topic if possible
+        chunk_query = select(DocumentChunk).where(DocumentChunk.document_id == primary_doc.id)
+        if topic.name:
+            # Try to find chunks related to this topic (by content similarity or section)
+            chunk_query = chunk_query.order_by(DocumentChunk.chunk_index)
+        else:
+            chunk_query = chunk_query.order_by(DocumentChunk.chunk_index)
+        
+        chunk_result = await self.db.execute(chunk_query)
+        chunks = chunk_result.scalars().all()
+
+        if not chunks:
+            yield f"data: {json.dumps({'event': 'generation_error', 'message': 'No document content found'})}\n\n"
+            return
+
+        # Create ExamSession for this chapter test (no test_id, has topic_id)
+        exam_session = ExamSession(
+            test_id=None,  # No teacher test - this is AI-generated
+            topic_id=topic_id,
+            student_id=student_id,
+            subject_id=subject_id,
+            status="in_progress",
+            total_questions_planned=question_count,
+            total_questions_generated=0,
+            question_ids=[],
+        )
+        self.db.add(exam_session)
+        await self.db.commit()
+        await self.db.refresh(exam_session)
+
+        # Send exam_started event
+        started_event = {
+            "event": "exam_started",
+            "exam_session_id": str(exam_session.id),
+            "topic_name": topic_name,
+            "subject_name": subject.name,
+            "total_questions": question_count,
+        }
+        yield f"data: {json.dumps(started_event)}\n\n"
+
+        # Initialize generation services
+        embedding_service = EmbeddingService()
+        llm_service = LLMService()
+        redis_service = RedisService()
+        document_service = DocumentService(self.db, embedding_service)
+        reranker_service = RerankerService() if settings.RERANKER_ENABLED else None
+
+        qgen_service = QuestionGenerationService(
+            db=self.db,
+            embedding_service=embedding_service,
+            llm_service=llm_service,
+            redis_service=redis_service,
+            document_service=document_service,
+            reranker_service=reranker_service,
+        )
+
+        # Build difficulty progression based on count
+        if question_count <= 3:
+            difficulty_pool = ["easy"] * question_count
+        elif question_count <= 5:
+            difficulty_pool = ["easy", "easy", "medium", "medium", "hard"][:question_count]
+        else:
+            # Balanced mix
+            easy_count = question_count // 3
+            medium_count = question_count // 3
+            hard_count = question_count - easy_count - medium_count
+            difficulty_pool = ["easy"] * easy_count + ["medium"] * medium_count + ["hard"] * hard_count
+
+        # Blacklist for deduplication within this session
+        blacklist_embeddings = []
+        generated_question_ids = []
+        all_doc_ids = [d.id for d in documents]
+
+        # Create generation session for tracking
+        session = GenerationSession(
+            user_id=student_id,
+            document_id=primary_doc.id,
+            subject_id=subject_id,
+            generation_method="streaming_chapter",
+            requested_count=question_count,
+            requested_types=["mcq"],
+            status="in_progress",
+            generation_config={
+                "exam_session_id": str(exam_session.id),
+                "topic_id": str(topic_id),
+                "topic_name": topic_name,
+            },
+        )
+        self.db.add(session)
+        await self.db.flush()
+
+        # Generate questions one at a time
+        for idx, difficulty in enumerate(difficulty_pool):
+            marks = 1 if difficulty == "easy" else (2 if difficulty == "medium" else 3)
+            max_attempts = 5
+            generated = False
+
+            for attempt in range(max_attempts):
+                try:
+                    # Select relevant chunks (focus on topic content via semantic search)
+                    selected_chunks = await qgen_service._select_chunks(
+                        chunks=chunks,
+                        focus_topics=[topic_name],  # Focus on this chapter's topic
+                        blacklist_chunks=set(),
+                        num_chunks=3,
+                        document_id=primary_doc.id,
+                        document_ids=all_doc_ids,
+                    )
+
+                    # Generate single MCQ question
+                    question_data = await qgen_service._generate_single_question(
+                        chunks=selected_chunks,
+                        question_type="mcq",
+                        difficulty=difficulty,
+                        marks=marks,
+                        bloom_levels=None,
+                    )
+
+                    if not question_data:
+                        continue
+
+                    # Check for duplicates
+                    is_duplicate = await qgen_service._check_duplicate(
+                        question_text=question_data["question_text"],
+                        blacklist_embeddings=blacklist_embeddings,
+                        threshold=0.90,
+                    )
+                    if is_duplicate:
+                        continue
+
+                    # Save question (auto-approved, linked to exam session)
+                    question_obj, _ = await qgen_service._save_question(
+                        document_id=primary_doc.id,
+                        session_id=session.id,
+                        question_data=question_data,
+                        question_type="mcq",
+                        marks=marks,
+                        difficulty=difficulty,
+                        chunk_ids=[c.id for c in selected_chunks],
+                        chunks=selected_chunks,
+                        subject_id=subject_id,
+                        exam_session_id=exam_session.id,
+                    )
+
+                    # Add to blacklist
+                    if question_obj.question_embedding is not None:
+                        blacklist_embeddings.append(question_obj.question_embedding)
+
+                    generated_question_ids.append(str(question_obj.id))
+
+                    # Update exam session
+                    exam_session.total_questions_generated = idx + 1
+                    exam_session.question_ids = generated_question_ids.copy()
+                    await self.db.commit()
+
+                    # Send question_ready event (without correct_answer)
+                    question_event = {
+                        "event": "question_ready",
+                        "index": idx,
+                        "question_id": str(question_obj.id),
+                        "question_text": question_obj.question_text,
+                        "question_type": question_obj.question_type,
+                        "options": question_obj.options,
+                        "difficulty_level": question_obj.difficulty_level,
+                        "marks": marks,
+                        "total_questions": question_count,
+                    }
+                    yield f"data: {json.dumps(question_event)}\n\n"
+
+                    generated = True
+                    break
+
+                except Exception as e:
+                    logger.warning(f"Chapter question generation attempt {attempt + 1} failed: {e}")
+                    continue
+
+            if not generated:
+                logger.warning(f"Failed to generate chapter question {idx + 1} after {max_attempts} attempts")
+
+        # Update session completion
+        session.status = "completed"
+        session.questions_generated = len(generated_question_ids)
+        session.completed_at = datetime.now(timezone.utc)
+
+        # Update exam session
+        if len(generated_question_ids) == 0:
+            exam_session.status = "abandoned"
+        
+        await self.db.commit()
+
+        # Send exam_complete event
+        complete_event = {
+            "event": "exam_complete",
+            "total_generated": len(generated_question_ids),
+        }
+        yield f"data: {json.dumps(complete_event)}\n\n"
+
+    async def submit_chapter_test(
+        self, 
+        exam_session_id: UUID, 
+        student_id: UUID, 
+        answers: list, 
+        total_time_seconds: int = None
+    ) -> dict:
+        """
+        Submit answers for a streaming chapter test session.
+        Scores the test and awards XP/gamification.
+        """
+        from app.models.test import ExamSession
+        from app.models.question import Question
+
+        # Get exam session
+        result = await self.db.execute(
+            select(ExamSession).where(
+                and_(
+                    ExamSession.id == exam_session_id,
+                    ExamSession.student_id == student_id,
+                )
+            )
+        )
+        exam_session = result.scalar_one_or_none()
+        if not exam_session:
+            raise ValueError("Exam session not found")
+
+        if exam_session.status == "completed":
+            raise ValueError("Test already submitted")
+
+        # Get the generated questions
+        question_ids = exam_session.question_ids or []
+        if not question_ids:
+            raise ValueError("No questions in this exam session")
+
+        questions_result = await self.db.execute(
+            select(Question).where(Question.id.in_([UUID(qid) for qid in question_ids]))
+        )
+        questions = {str(q.id): q for q in questions_result.scalars().all()}
+
+        # Score the answers
+        score = 0
+        total_marks = 0
+        answer_results = []
+        question_details = []
+
+        for ans in answers:
+            q_id = str(ans.get("question_id"))
+            selected = ans.get("selected_answer")
+            q = questions.get(q_id)
+
+            if not q:
+                continue
+
+            marks = q.marks or 1
+            total_marks += marks
+            is_correct = selected == q.correct_answer
+
+            if is_correct:
+                score += marks
+
+            answer_results.append({
+                "question_id": q_id,
+                "selected_answer": selected,
+                "correct_answer": q.correct_answer,
+                "is_correct": is_correct,
+                "marks": marks if is_correct else 0,
+            })
+            
+            question_details.append({
+                "question_text": q.question_text,
+                "selected_answer": selected,
+                "correct_answer": q.correct_answer,
+                "is_correct": is_correct,
+            })
+
+        # Update exam session
+        exam_session.status = "completed"
+        exam_session.answers = answer_results
+        exam_session.score = score
+        exam_session.total_marks = total_marks
+        exam_session.completed_at = datetime.now(timezone.utc)
+        await self.db.commit()
+
+        # Process gamification (XP, streaks, etc)
+        gamification_result = await self.process_test_submission(
+            student_id=student_id,
+            subject_id=exam_session.subject_id,
+            title=f"Chapter Test",
+            correct_count=sum(1 for r in answer_results if r["is_correct"]),
+            total_marks=total_marks,
+            total_questions=len(answer_results),
+            total_time_seconds=total_time_seconds or 0,
+            results=[
+                {"question_id": r["question_id"], "is_correct": r["is_correct"]}
+                for r in answer_results
+            ],
+            question_details=question_details,
+        )
+
+        return {
+            "exam_session_id": str(exam_session_id),
+            "score": score,
+            "total_marks": total_marks,
+            "total_questions": len(answer_results),
+            "correct_answers": sum(1 for r in answer_results if r["is_correct"]),
+            "accuracy": (score / total_marks * 100) if total_marks > 0 else 0,
+            "xp_earned": gamification_result.get("xp_earned", 0),
+            "tutor_feedback": gamification_result.get("tutor_feedback"),
+            "results": answer_results,
+        }

@@ -397,11 +397,12 @@ export default function TestsDashboard() {
                     colors={colors}
                     onStart={() => {
                       router.push({
-                        pathname: '/(tabs)/learn/lesson',
+                        pathname: '/(tabs)/tests/chapter-test',
                         params: {
                           subjectId: selectedSubject!.id,
                           subjectName: selectedSubject!.name,
                           topicId: topic.id,
+                          topicName: topic.name,
                         },
                       });
                     }}
