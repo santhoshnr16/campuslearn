@@ -4,9 +4,9 @@ Rubric database model for exam generation.
 
 from datetime import datetime
 from typing import Optional, List
-from sqlalchemy import String, Integer, DateTime, Text, ForeignKey, func
+from sqlalchemy import String, Integer, DateTime, Text, ForeignKey, func, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import UUID
 import uuid
 
 from app.core.database import Base
@@ -34,11 +34,11 @@ class Rubric(Base):
     
     # Question type distribution (MAP 1)
     # Format: {"mcq": {"count": 20, "marks_each": 2}, "short_notes": {"count": 5, "marks_each": 6}, ...}
-    question_type_distribution: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    question_type_distribution: Mapped[dict] = mapped_column(JSON, nullable=False)
     
     # Learning Outcomes distribution (MAP 2)
     # Format: {"LO1": 25, "LO2": 25, "LO3": 20, "LO4": 15, "LO5": 15}
-    learning_outcomes_distribution: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    learning_outcomes_distribution: Mapped[dict] = mapped_column(JSON, nullable=False)
     
     # Computed totals
     total_questions: Mapped[int] = mapped_column(Integer, default=0)

@@ -235,21 +235,36 @@ async def quick_generate_questions(
     - Context: "Binary Trees and Tree Traversal Algorithms"
     - Get: 5 questions about binary trees
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    # DEBUG: Log initial request details
+    logger.info(f"[QUICK-GENERATE] Request received from user {current_user.id}")
+    logger.info(f"[QUICK-GENERATE] File details: filename={file.filename}, content_type={file.content_type}")
+    logger.info(f"[QUICK-GENERATE] Parameters: context='{context}', count={count}, types={types}, difficulty={difficulty}")
+    
     # Validate file extension
     filename = file.filename or "document.pdf"
+    logger.info(f"[QUICK-GENERATE] Processing filename: {filename}")
+    
     ext = os.path.splitext(filename)[1].lower()
+    logger.info(f"[QUICK-GENERATE] File extension: {ext}")
     
     if ext not in settings.ALLOWED_EXTENSIONS:
+        logger.error(f"[QUICK-GENERATE] Unsupported file type: {ext}")
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
             detail=f"Unsupported file type. Allowed: {', '.join(settings.ALLOWED_EXTENSIONS)}",
         )
     
     # Read file content
+    logger.info(f"[QUICK-GENERATE] Reading file content...")
     content = await file.read()
+    logger.info(f"[QUICK-GENERATE] File content size: {len(content)} bytes")
     
     # Validate file size
     if len(content) > settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024:
+        logger.error(f"[QUICK-GENERATE] File too large: {len(content)} bytes")
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=f"File too large. Maximum size: {settings.MAX_UPLOAD_SIZE_MB}MB",
@@ -259,10 +274,14 @@ async def quick_generate_questions(
     type_list = [t.strip() for t in types.split(",")] if types else ["mcq", "short_answer"]
     bloom_list = [b.strip() for b in bloom_levels.split(",")] if bloom_levels else None
     
+    logger.info(f"[QUICK-GENERATE] Parsed types: {type_list}")
+    logger.info(f"[QUICK-GENERATE] Parsed bloom levels: {bloom_list}")
+    
     # Validate types
     valid_types = {"mcq", "short_answer", "long_answer"}
     for t in type_list:
         if t not in valid_types:
+            logger.error(f"[QUICK-GENERATE] Invalid question type: {t}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid question type: {t}. Valid types: {', '.join(valid_types)}",
@@ -270,6 +289,7 @@ async def quick_generate_questions(
     
     # Validate difficulty
     if difficulty not in {"easy", "medium", "hard"}:
+        logger.error(f"[QUICK-GENERATE] Invalid difficulty: {difficulty}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid difficulty. Must be: easy, medium, or hard",
@@ -280,47 +300,59 @@ async def quick_generate_questions(
         valid_blooms = {"remember", "understand", "apply", "analyze", "evaluate", "create"}
         for b in bloom_list:
             if b not in valid_blooms:
+                logger.error(f"[QUICK-GENERATE] Invalid bloom level: {b}")
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Invalid bloom level: {b}. Valid levels: {', '.join(valid_blooms)}",
                 )
     
     mime_type = MIME_TYPE_MAPPING.get(ext, "application/octet-stream")
+    logger.info(f"[QUICK-GENERATE] MIME type: {mime_type}")
+    logger.info(f"[QUICK-GENERATE] All validations passed, starting event generator...")
     
     async def event_generator():
         """Generate SSE events for quick generation."""
         import logging
         logger = logging.getLogger(__name__)
         
-        document_service = DocumentService(db)
-        question_service = QuestionGenerationService(db)
-        
-        # Step 1: Upload and process document
-        logger.info(f"Quick generate: Starting for user {current_user.id}, context: {context}")
-        yield f"data: {QuickGenerateProgress(status='uploading', progress=5, message='Uploading document...').model_dump_json()}\n\n"
+        logger.info(f"[QUICK-GENERATE] Event generator started for user {current_user.id}")
         
         try:
+            document_service = DocumentService(db)
+            question_service = QuestionGenerationService(db)
+            logger.info(f"[QUICK-GENERATE] Services initialized")
+            
+            # Step 1: Upload and process document
+            logger.info(f"[QUICK-GENERATE] Starting for user {current_user.id}, context: {context}")
+            yield f"data: {QuickGenerateProgress(status='uploading', progress=5, message='Uploading document...').model_dump_json()}\n\n"
+            
             yield f"data: {QuickGenerateProgress(status='processing', progress=10, message='Processing document content...').model_dump_json()}\n\n"
             
             # Upload and process synchronously
-            logger.info(f"Quick generate: Processing document {filename}")
-            document = await document_service.upload_and_process_document(
-                user_id=current_user.id,
-                filename=filename,
-                file_content=content,
-                mime_type=mime_type,
-                context=context,
-            )
+            logger.info(f"[QUICK-GENERATE] Processing document {filename}")
+            try:
+                document = await document_service.upload_and_process_document(
+                    user_id=current_user.id,
+                    filename=filename,
+                    file_content=content,
+                    mime_type=mime_type,
+                    context=context,
+                )
+                logger.info(f"[QUICK-GENERATE] Document processed successfully")
+            except Exception as e:
+                logger.error(f"[QUICK-GENERATE] Document processing failed: {str(e)}")
+                yield f"data: {QuickGenerateProgress(status='error', progress=0, message=f'Document processing failed: {str(e)}').model_dump_json()}\n\n"
+                return
             
             # Extract document_id immediately to avoid session issues
             doc_id = document.id
             doc_chunks = document.total_chunks
             
-            logger.info(f"Quick generate: Document processed, {doc_chunks} chunks")
+            logger.info(f"[QUICK-GENERATE] Document processed, {doc_chunks} chunks")
             yield f"data: {QuickGenerateProgress(status='processing', progress=20, message=f'Document processed: {doc_chunks} sections extracted', document_id=doc_id).model_dump_json()}\n\n"
             
             # Step 2: Generate questions
-            logger.info(f"Quick generate: Starting question generation, count={count}, types={type_list}")
+            logger.info(f"[QUICK-GENERATE] Starting question generation, count={count}, types={type_list}")
             generation_started = False
             
             # Build marks by type dictionary

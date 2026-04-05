@@ -4,9 +4,9 @@ Test database models for teacher-created assessments.
 
 from datetime import datetime
 from typing import Optional, List
-from sqlalchemy import String, Integer, Float, Boolean, DateTime, Text, ForeignKey, func, UniqueConstraint
+from sqlalchemy import String, Integer, Float, Boolean, DateTime, Text, ForeignKey, func, UniqueConstraint, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY
+from sqlalchemy.dialects.postgresql import UUID, ARRAY
 import uuid
 
 from app.core.database import Base
@@ -39,11 +39,11 @@ class Test(Base):
     
     # Configuration for difficulty levels
     # Format: {"easy": {"count": 5, "lo_mapping": ["LO1","LO2"]}, "medium": {"count": 3, "lo_mapping": ["LO3"]}, "hard": {"count": 2, "lo_mapping": ["LO4","LO5"]}}
-    difficulty_config: Mapped[Optional[dict]] = mapped_column(JSONB)
+    difficulty_config: Mapped[Optional[dict]] = mapped_column(JSON)
     
     # Topic selections for topic_wise / multi_topic generation
     # Format: [{"topic_id": "...", "count": 5}, ...]
-    topic_config: Mapped[Optional[list]] = mapped_column(JSONB)
+    topic_config: Mapped[Optional[list]] = mapped_column(JSON)
 
     # Total counts
     total_questions: Mapped[int] = mapped_column(Integer, default=0)
@@ -96,7 +96,7 @@ class TestQuestion(Base):
 
     # Overrides (teacher can edit question text for this test)
     question_text_override: Mapped[Optional[str]] = mapped_column(Text)
-    options_override: Mapped[Optional[List[str]]] = mapped_column(ARRAY(Text))
+    options_override: Mapped[Optional[List[str]]] = mapped_column(JSON)
     correct_answer_override: Mapped[Optional[str]] = mapped_column(Text)
 
     # Timestamps
@@ -134,7 +134,7 @@ class TestSubmission(Base):
     percentage: Mapped[float] = mapped_column(Float, default=0.0)
 
     # Details
-    answers: Mapped[Optional[dict]] = mapped_column(JSONB)
+    answers: Mapped[Optional[dict]] = mapped_column(JSON)
     # Format: [{"question_id": "...", "selected_answer": "A", "is_correct": true, "marks_obtained": 1, "time_taken_seconds": 30}]
 
     time_taken_seconds: Mapped[Optional[int]] = mapped_column(Integer)

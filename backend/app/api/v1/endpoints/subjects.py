@@ -7,6 +7,7 @@ import io
 import logging
 from typing import Optional, List
 import uuid
+import fitz  # PyMuPDF
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File
 from sqlalchemy import select, func
@@ -619,7 +620,6 @@ async def _extract_text_from_file(content: bytes, extension: str) -> str:
     """Extract text from file content based on file type."""
     
     if extension == ".pdf":
-        import fitz  # PyMuPDF
         text_parts = []
         with fitz.open(stream=content, filetype="pdf") as doc:
             for page in doc:

@@ -818,7 +818,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   contentContainer: {
-    paddingTop: Spacing.lg,
+    paddingTop: Spacing.xl,
   },
   headerCard: {
     marginHorizontal: Spacing.lg,

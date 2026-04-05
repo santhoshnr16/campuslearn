@@ -4,9 +4,9 @@ Question and GenerationSession database models.
 
 from datetime import datetime
 from typing import Optional, List
-from sqlalchemy import String, Integer, Float, Boolean, DateTime, Text, ForeignKey, CheckConstraint, func
+from sqlalchemy import String, Integer, Float, Boolean, DateTime, Text, ForeignKey, CheckConstraint, func, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY
+from sqlalchemy.dialects.postgresql import UUID, ARRAY
 from pgvector.sqlalchemy import Vector
 import uuid
 
@@ -45,15 +45,15 @@ class Question(Base):
     
     # Answer for MCQs
     correct_answer: Mapped[Optional[str]] = mapped_column(Text)
-    options: Mapped[Optional[List[str]]] = mapped_column(ARRAY(Text))
+    options: Mapped[Optional[List[str]]] = mapped_column(JSON)
     explanation: Mapped[Optional[str]] = mapped_column(Text)  # Explanation for the answer
     
     # Context
-    source_chunk_ids: Mapped[Optional[List[uuid.UUID]]] = mapped_column(ARRAY(UUID(as_uuid=True)))
-    topic_tags: Mapped[Optional[List[str]]] = mapped_column(ARRAY(Text))
+    source_chunk_ids: Mapped[Optional[List[uuid.UUID]]] = mapped_column(JSON)
+    topic_tags: Mapped[Optional[List[str]]] = mapped_column(JSON)
     
     # OBE Course Outcome mapping (CO1-CO5 with levels 1-3)
-    course_outcome_mapping: Mapped[Optional[dict]] = mapped_column(JSONB)  # {"CO1": 2, "CO3": 1}
+    course_outcome_mapping: Mapped[Optional[dict]] = mapped_column(JSON)  # {"CO1": 2, "CO3": 1}
     learning_outcome_id: Mapped[Optional[str]] = mapped_column(String(50))  # LO1, LO2, etc.
     
     # Vetting/Review status
@@ -76,7 +76,7 @@ class Question(Base):
     
     # Novelty validation metadata (stores detailed similarity breakdown)
     # Format: {"approved_max_sim": 0.3, "pending_max_sim": 0.2, "template_max_sim": 0.4, "reference_max_sim": 0.25}
-    novelty_metadata: Mapped[Optional[dict]] = mapped_column(JSONB)
+    novelty_metadata: Mapped[Optional[dict]] = mapped_column(JSON)
     
     # Generation status for internal tracking (not exposed to UI)
     # accepted: passed novelty threshold
@@ -111,7 +111,7 @@ class Question(Base):
     last_shown_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     
     # Metadata
-    generation_metadata: Mapped[Optional[dict]] = mapped_column(JSONB)
+    generation_metadata: Mapped[Optional[dict]] = mapped_column(JSON)
     
     # Relationships
     document = relationship("Document", back_populates="questions")
@@ -155,10 +155,10 @@ class GenerationSession(Base):
     
     # Request parameters
     requested_count: Mapped[int] = mapped_column(Integer, default=0)
-    requested_types: Mapped[Optional[List[str]]] = mapped_column(ARRAY(Text))
+    requested_types: Mapped[Optional[List[str]]] = mapped_column(JSON)
     requested_marks: Mapped[Optional[int]] = mapped_column(Integer)
     requested_difficulty: Mapped[Optional[str]] = mapped_column(String(20))
-    focus_topics: Mapped[Optional[List[str]]] = mapped_column(ARRAY(Text))
+    focus_topics: Mapped[Optional[List[str]]] = mapped_column(JSON)
     
     # Generation tracking
     status: Mapped[str] = mapped_column(String(20), default="in_progress")
@@ -183,7 +183,7 @@ class GenerationSession(Base):
     
     # Error handling
     error_message: Mapped[Optional[str]] = mapped_column(Text)
-    generation_config: Mapped[Optional[dict]] = mapped_column(JSONB)
+    generation_config: Mapped[Optional[dict]] = mapped_column(JSON)
     
     # Relationships
     user = relationship("User", back_populates="generation_sessions")
