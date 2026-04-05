@@ -1483,6 +1483,7 @@ async def vet_question(
         "user_rating": question.user_rating,
         "is_archived": question.is_archived,
         "generation_metadata": question.generation_metadata,
+        "source_chunk_ids": question.source_chunk_ids,
     }
 
     if vetting_data.status == "rejected":
@@ -1582,20 +1583,58 @@ async def vet_question(
             embedding_service = EmbeddingService()
             doc_service = DocumentService(db, embedding_service)
 
-            # Fetch document chunks for RAG context
+            # Fetch document chunks for RAG context — prefer original source chunks
             try:
                 from app.models.document import DocumentChunk
-                chunk_res = await db.execute(
-                    select(DocumentChunk)
-                    .where(DocumentChunk.document_id == question_snapshot["document_id"])
-                    .order_by(DocumentChunk.chunk_index)
-                    .limit(10)
-                )
-                doc_chunks = chunk_res.scalars().all()
+                original_chunk_ids = question_snapshot.get("source_chunk_ids") or []
+                doc_chunks = []
+                if original_chunk_ids:
+                    # Fetch the exact chunks that produced the original question
+                    chunk_res = await db.execute(
+                        select(DocumentChunk)
+                        .where(DocumentChunk.id.in_(original_chunk_ids))
+                        .order_by(DocumentChunk.chunk_index)
+                    )
+                    doc_chunks = chunk_res.scalars().all()
+                
+                if not doc_chunks:
+                    # Fallback to first chunks from the document
+                    chunk_res = await db.execute(
+                        select(DocumentChunk)
+                        .where(DocumentChunk.document_id == question_snapshot["document_id"])
+                        .order_by(DocumentChunk.chunk_index)
+                        .limit(10)
+                    )
+                    doc_chunks = chunk_res.scalars().all()
+                
                 content_context = "\n\n".join(c.chunk_text for c in doc_chunks if c.chunk_text)[:4000]
+                
+                # Extract original source references for the prompt
+                original_source_context = ""
+                orig_meta = question_snapshot.get("generation_metadata") or {}
+                raw_response = orig_meta.get("raw_response") or {}
+                orig_source_info = orig_meta.get("source_info") or raw_response.get("source_info") or {}
+                orig_sources = orig_source_info.get("sources", [])
+                if orig_sources:
+                    source_parts = []
+                    for src in orig_sources:
+                        parts = []
+                        if src.get("document_name"):
+                            parts.append(f"Document: {src['document_name']}")
+                        if src.get("page_number"):
+                            parts.append(f"Page: {src['page_number']}")
+                        if src.get("section_heading"):
+                            parts.append(f"Section: {src['section_heading']}")
+                        if src.get("content_snippet"):
+                            parts.append(f"Content: {src['content_snippet'][:300]}")
+                        if parts:
+                            source_parts.append("\n".join(parts))
+                    if source_parts:
+                        original_source_context = "\n\n".join(f"[Source {i+1}]\n{s}" for i, s in enumerate(source_parts))
             except Exception as e:
                 logger.warning(f"Failed to load document chunks for regen: {e}")
                 content_context = ""
+                original_source_context = ""
 
             if content_context:
                 system_prompt = _get_rubric_system_prompt(q_type)
@@ -1611,6 +1650,10 @@ async def vet_question(
                         if regeneration_mode == "modify":
                             # Keep same concept, improve the question based on feedback
                             prompt = f"""Content:\n{content_context}\n
+{f'''
+ORIGINAL SOURCE REFERENCES (use the same source material to generate the improved question):
+{original_source_context}
+''' if original_source_context else ''}
 
 TASK: Improve the following question based on user feedback.
 
@@ -1636,6 +1679,10 @@ Output valid JSON only."""
                         else:
                             # Generate completely new question from different content
                             prompt = f"""Content:\n{content_context}\n
+{f'''
+ORIGINAL SOURCE REFERENCES (generate from the same or nearby source material):
+{original_source_context}
+''' if original_source_context else ''}
 
 Generate a COMPLETELY NEW {q_type.replace('_', ' ')} question based on this content.
 

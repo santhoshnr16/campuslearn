@@ -175,7 +175,7 @@ export default function LearnDashboard() {
                 </View>
                 <TouchableOpacity
                   style={[styles.startButton, { backgroundColor: colors.primary }]}
-                  onPress={() => handleStartLesson(subject)}
+                  onPress={() => handleSubjectPress(subject)}
                 >
                   <Text style={styles.startButtonText}>Learn</Text>
                 </TouchableOpacity>

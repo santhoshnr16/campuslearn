@@ -41,7 +41,7 @@ class Subject(Base):
     syllabus_coverage: Mapped[int] = mapped_column(Integer, default=0)  # percentage
     
     # Publishing
-    published: Mapped[bool] = mapped_column(Boolean, default=False)
+    published: Mapped[bool] = mapped_column(Boolean, default=True)
     
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(

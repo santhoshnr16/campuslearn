@@ -1,11 +1,12 @@
 /**
- * Lesson Result Screen - shows score, XP earned, streak
+ * Lesson Result Screen - shows score, XP earned, streak, and AI Tutor feedback
  */
-import React, { useEffect } from 'react';
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Animated, ActivityIndicator } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as Haptics from 'expo-haptics';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { Colors, Spacing, FontSizes, BorderRadius } from '@/constants/theme';
 import { useLearningStore } from '@/stores/learningStore';
@@ -18,18 +19,58 @@ export default function ResultScreen() {
 
   const { lessonResult, clearLesson, loadProfile } = useLearningStore();
 
+  // Animations
+  const heroScale = useRef(new Animated.Value(0)).current;
+  const feedbackFade = useRef(new Animated.Value(0)).current;
+  const feedbackSlide = useRef(new Animated.Value(20)).current;
+  const confettiOpacity = useRef(new Animated.Value(0)).current;
+
   useEffect(() => {
-    return () => {
-      clearLesson();
-    };
-  }, [clearLesson]);
+    // Animate hero entrance
+    Animated.spring(heroScale, {
+      toValue: 1,
+      tension: 40,
+      friction: 5,
+      useNativeDriver: true,
+    }).start();
+
+    // Animate tutor feedback
+    if (lessonResult?.tutor_feedback) {
+      Animated.parallel([
+        Animated.timing(feedbackFade, { toValue: 1, duration: 600, delay: 800, useNativeDriver: true }),
+        Animated.timing(feedbackSlide, { toValue: 0, duration: 600, delay: 800, useNativeDriver: true }),
+      ]).start();
+    }
+
+    // Celebration haptic for good scores
+    if (lessonResult) {
+      const accuracy = lessonResult.accuracy;
+      if (accuracy >= 80) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } else if (accuracy >= 50) {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      }
+      if (lessonResult.level_up) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        // Flash confetti
+        Animated.sequence([
+          Animated.timing(confettiOpacity, { toValue: 1, duration: 300, useNativeDriver: true }),
+          Animated.timing(confettiOpacity, { toValue: 0, duration: 2000, delay: 1500, useNativeDriver: true }),
+        ]).start();
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lessonResult]);
 
   const handleContinue = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     loadProfile();
+    clearLesson();
     router.replace('/(tabs)/learn');
   };
 
   const handleRetry = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     clearLesson();
     router.replace({
       pathname: '/(tabs)/learn/lesson',
@@ -56,8 +97,15 @@ export default function ResultScreen() {
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
       <ScrollView contentContainerStyle={styles.content}>
+        {/* Confetti overlay for level-ups */}
+        {lessonResult.level_up && (
+          <Animated.View style={[styles.confettiOverlay, { opacity: confettiOpacity }]} pointerEvents="none">
+            <Text style={styles.confettiText}>🎉🎊✨🎉🎊✨🎉</Text>
+          </Animated.View>
+        )}
+
         {/* Hero */}
-        <View style={styles.hero}>
+        <Animated.View style={[styles.hero, { transform: [{ scale: heroScale }] }]}>
           <Text style={styles.heroEmoji}>
             {isPerfect ? '🏆' : accuracy >= 80 ? '🌟' : accuracy >= 50 ? '👍' : '💪'}
           </Text>
@@ -67,7 +115,7 @@ export default function ResultScreen() {
           <Text style={[styles.heroSubtitle, { color: colors.textSecondary }]}>
             {params.subjectName}
           </Text>
-        </View>
+        </Animated.View>
 
         {/* Score */}
         <View style={[styles.scoreCard, { backgroundColor: colors.backgroundSecondary }]}>
@@ -124,6 +172,36 @@ export default function ResultScreen() {
           </View>
         </View>
 
+        {/* AI Tutor Feedback */}
+        {lessonResult.tutor_feedback ? (
+          <Animated.View style={[
+            styles.tutorCard,
+            { backgroundColor: colors.backgroundSecondary, borderColor: colors.border, opacity: feedbackFade, transform: [{ translateY: feedbackSlide }] },
+          ]}>
+            <View style={styles.tutorHeader}>
+              <View style={[styles.tutorAvatar, { backgroundColor: colors.primary + '20' }]}>
+                <Text style={styles.tutorAvatarEmoji}>🤖</Text>
+              </View>
+              <View>
+                <Text style={[styles.tutorName, { color: colors.text }]}>AI Tutor</Text>
+                <Text style={[styles.tutorSubtitle, { color: colors.textTertiary }]}>Personalized feedback</Text>
+              </View>
+            </View>
+            <View style={[styles.tutorBubble, { backgroundColor: colors.primary + '10' }]}>
+              <Text style={[styles.tutorFeedbackText, { color: colors.text }]}>
+                {lessonResult.tutor_feedback}
+              </Text>
+            </View>
+          </Animated.View>
+        ) : (
+          <View style={[styles.tutorLoadingCard, { backgroundColor: colors.backgroundSecondary }]}>
+            <ActivityIndicator size="small" color={colors.primary} />
+            <Text style={[styles.tutorLoadingText, { color: colors.textSecondary }]}>
+              The Tutor is evaluating your answers...
+            </Text>
+          </View>
+        )}
+
         {/* Actions */}
         <View style={styles.actions}>
           <TouchableOpacity
@@ -150,6 +228,15 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1 },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   content: { padding: Spacing.lg, paddingBottom: 100 },
+  confettiOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    zIndex: 10,
+  },
+  confettiText: { fontSize: 40, letterSpacing: 8 },
   hero: { alignItems: 'center', paddingVertical: Spacing.xl },
   heroEmoji: { fontSize: 64 },
   heroTitle: { fontSize: FontSizes.xxxl, fontWeight: '800', marginTop: Spacing.md },
@@ -190,6 +277,47 @@ const styles = StyleSheet.create({
   miniStatEmoji: { fontSize: 24 },
   miniStatValue: { fontSize: FontSizes.xl, fontWeight: '700', marginTop: 4 },
   miniStatLabel: { fontSize: FontSizes.xs, marginTop: 2 },
+  // AI Tutor styles
+  tutorCard: {
+    marginTop: Spacing.lg,
+    borderRadius: BorderRadius.xl,
+    padding: Spacing.lg,
+    borderWidth: 1,
+  },
+  tutorHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    marginBottom: Spacing.md,
+  },
+  tutorAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  tutorAvatarEmoji: { fontSize: 22 },
+  tutorName: { fontSize: FontSizes.md, fontWeight: '700' },
+  tutorSubtitle: { fontSize: FontSizes.xs },
+  tutorBubble: {
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.md,
+  },
+  tutorFeedbackText: {
+    fontSize: FontSizes.sm + 1,
+    lineHeight: 22,
+  },
+  tutorLoadingCard: {
+    marginTop: Spacing.lg,
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    justifyContent: 'center',
+  },
+  tutorLoadingText: { fontSize: FontSizes.sm },
   actions: { marginTop: Spacing.xl, gap: Spacing.sm },
   primaryAction: {
     paddingVertical: Spacing.md,

@@ -20,10 +20,26 @@ class EnrollmentResponse(BaseModel):
     subject_id: UUID
     enrolled_at: datetime
     is_active: bool
+    status: str = "pending"
     subject_name: Optional[str] = None
     subject_code: Optional[str] = None
 
     model_config = {"from_attributes": True}
+
+
+class PendingEnrollmentResponse(BaseModel):
+    id: UUID
+    student_id: UUID
+    student_name: Optional[str] = None
+    student_email: Optional[str] = None
+    subject_id: UUID
+    subject_name: Optional[str] = None
+    enrolled_at: datetime
+    status: str
+
+
+class EnrollmentActionRequest(BaseModel):
+    action: str  # "approve" or "reject"
 
 
 # --- Student Progress ---
@@ -104,6 +120,7 @@ class LessonResult(BaseModel):
     new_level: int
     results: List[AnswerResult]
     accuracy: float
+    tutor_feedback: Optional[str] = None
 
 
 # --- Test History ---
@@ -120,6 +137,7 @@ class TestHistoryResponse(BaseModel):
     xp_earned: int
     time_taken_seconds: Optional[int] = None
     difficulty: str
+    tutor_feedback: Optional[str] = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -187,6 +205,7 @@ class SubjectListStudent(BaseModel):
     total_topics: int = 0
     total_questions: int = 0
     is_enrolled: bool = False
+    enrollment_status: Optional[str] = None  # pending, approved, rejected, or None
     mastery: float = 0.0
     xp_earned: int = 0
 

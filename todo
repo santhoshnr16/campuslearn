@@ -1,13 +1,3 @@
-√ vetting - question rejection regen
+admin panel for approval of registered teachers.
 
-√ upload question paper (template) -> rag -> llm -> use template as reference to generate new questions
-
-√ novelty checking 
-
-√ reference book to be used to reference when novelty is less than a set threshold
-
-only vetting approved questions must go to the respective subject's questions page
-
-CO/LO/Chapter/Subject Mapping is still buggy
-
-check on "raft"
+level screens for difficulty based question.

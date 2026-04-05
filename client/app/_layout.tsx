@@ -9,6 +9,8 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useAuthStore } from '@/stores/authStore';
 import { View, ActivityIndicator } from 'react-native';
 import { ToastProvider } from '@/components/toast';
+import { QueryProvider } from '@/providers/QueryProvider';
+import { SSEProvider } from '@/providers/SSEProvider';
 
 export const unstable_settings = {
   initialRouteName: '(tabs)',
@@ -17,7 +19,7 @@ export const unstable_settings = {
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const segments = useSegments();
   const router = useRouter();
-  const { isAuthenticated, isLoading, checkAuth } = useAuthStore();
+  const { user, isAuthenticated, isLoading, checkAuth } = useAuthStore();
 
   useEffect(() => {
     checkAuth();
@@ -27,15 +29,20 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
     if (isLoading) return;
 
     const inAuthGroup = segments[0] === '(auth)';
-    
+
     if (!isAuthenticated && !inAuthGroup) {
       // Redirect to login
       router.replace('/(auth)/login');
     } else if (isAuthenticated && inAuthGroup) {
-      // Redirect to home
-      router.replace('/(tabs)/home');
+      // Redirect to correct home based on role
+      const isTeacher = user?.role === 'teacher' || user?.role === 'admin';
+      if (isTeacher) {
+        router.replace('/(tabs)/home');
+      } else {
+        router.replace('/(tabs)/learn');
+      }
     }
-  }, [isAuthenticated, isLoading, segments]);
+  }, [isAuthenticated, isLoading, segments, user]);
 
   if (isLoading) {
     return (
@@ -53,23 +60,27 @@ export default function RootLayout() {
 
   return (
     <SafeAreaProvider>
-      <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-        <ToastProvider>
-          <AuthGuard>
-            <Stack
-              screenOptions={{
-                headerTransparent: true,
-                headerStyle: { backgroundColor: 'transparent' },
-              }}
-            >
-              <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-              <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-              <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
-            </Stack>
-          </AuthGuard>
-        </ToastProvider>
-        <StatusBar style="auto" />
-      </ThemeProvider>
+      <QueryProvider>
+        <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+          <ToastProvider>
+            <SSEProvider>
+              <AuthGuard>
+                <Stack
+                  screenOptions={{
+                    headerTransparent: true,
+                    headerStyle: { backgroundColor: 'transparent' },
+                  }}
+                >
+                  <Stack.Screen name="(auth)" options={{ headerShown: false }} />
+                  <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+                  <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
+                </Stack>
+              </AuthGuard>
+            </SSEProvider>
+          </ToastProvider>
+          <StatusBar style="auto" />
+        </ThemeProvider>
+      </QueryProvider>
     </SafeAreaProvider>
   );
 }

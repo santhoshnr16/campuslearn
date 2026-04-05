@@ -1,4 +1,4 @@
-# QuestionGeneration AI
+# Campus Learn
 
 <div align="center">
 
@@ -8,7 +8,7 @@
 ![React Native](https://img.shields.io/badge/React%20Native-Expo%20SDK%2054-purple.svg)
 ![License](https://img.shields.io/badge/license-MIT-yellow.svg)
 
-**A stateful RAG-based question generation system for educators**
+**Smart Learning, Better Results — AI-powered education for teachers and students**
 
 [Features](#-features) • [Architecture](#-architecture) • [Quick Start](#-quick-start) • [API Reference](#-api-reference) • [Configuration](#-configuration)
 
@@ -18,16 +18,32 @@
 
 ## 📋 Overview
 
-QuestionGeneration AI is an intelligent exam question generation platform that leverages Retrieval-Augmented Generation (RAG) to create high-quality, contextually relevant questions from educational documents. Built for educators who want to save time while creating diverse, curriculum-aligned assessments.
+Campus Learn is an intelligent education platform that combines AI-powered question generation for educators with gamified learning experiences for students. Using Retrieval-Augmented Generation (RAG), it creates high-quality, contextually relevant questions from educational documents while providing students an engaging, Duolingo-style practice environment.
 
-### Key Capabilities
+### For Educators 👨‍🏫
 
 - 📄 **Document Processing**: Upload PDFs, DOCX, or TXT files and automatically extract content
 - 🧠 **Intelligent Generation**: Generate MCQs, short-answer, and long-answer questions using LLMs
 - 🔍 **Hybrid Search**: Combines BM25 keyword search with vector similarity for optimal retrieval
 - 📊 **Bloom's Taxonomy**: Target specific cognitive levels (Remember → Create)
 - ✅ **Quality Validation**: Automatic scoring for answerability, specificity, and confidence
-- 📱 **Mobile-First**: Beautiful React Native app with real-time streaming updates
+- 📝 **Test Creation**: Create and publish tests with customizable difficulty distributions
+
+### For Students 📚
+
+- 🎮 **Gamified Learning**: Duolingo-style lessons with XP, hearts, and streaks
+- 🏆 **Leaderboards**: Compete with classmates on subject-specific rankings
+- 🎯 **Adaptive Practice**: Practice questions from enrolled subjects and topics
+- 💬 **AI Tutor Feedback**: Personalized feedback after each lesson
+- 📈 **Progress Tracking**: Monitor your learning journey with detailed statistics
+- 🔥 **Daily Streaks**: Stay motivated with streak tracking and achievements
+
+### Mobile-First Design 📱
+
+- Beautiful React Native app with real-time streaming updates
+- Dark/light mode support
+- Haptic feedback for engaging interactions
+- Smooth animations and transitions
 
 ---
 
@@ -51,6 +67,25 @@ QuestionGeneration AI is an intelligent exam question generation platform that l
 | **Deduplication** | Semantic similarity check against existing questions |
 | **Quality Scoring** | Answerability, Specificity, Generation Confidence |
 
+### Gamification System
+| Feature | Description |
+|---------|-------------|
+| **XP & Levels** | Earn experience points, level up with milestones |
+| **Hearts System** | Limited attempts per lesson (Duolingo-style) |
+| **Streaks** | Daily practice tracking with streak rewards |
+| **Leaderboards** | Global and subject-specific rankings |
+| **AI Tutor** | Personalized feedback after each lesson |
+| **Progress Tracking** | Topic mastery and performance analytics |
+
+### Test Management
+| Feature | Description |
+|---------|-------------|
+| **Test Creation** | Teachers create tests with custom configurations |
+| **Difficulty Distribution** | Customize easy/medium/hard question ratios |
+| **Topic Selection** | Generate from specific topics or entire subjects |
+| **Student Submissions** | Track test participation and performance |
+| **Performance Analytics** | View aggregated class performance data |
+
 ### Infrastructure
 | Feature | Description |
 |---------|-------------|
@@ -69,8 +104,12 @@ QuestionGeneration AI is an intelligent exam question generation platform that l
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                           CLIENT (React Native)                          │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐    │
-│  │   Auth      │  │  Documents  │  │  Questions  │  │   Vetting   │    │
-│  │   Store     │  │   Upload    │  │  Generate   │  │   Review    │    │
+│  │   Auth      │  │  Documents  │  │  Questions  │  │   Learn     │    │
+│  │   Store     │  │   Upload    │  │  Generate   │  │  (Student)  │    │
+│  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘    │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐    │
+│  │   Tests     │  │ Leaderboard │  │  Profile    │  │  History    │    │
+│  │   (CRUD)    │  │   Rankings  │  │  & Stats    │  │   Review    │    │
 │  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘    │
 └───────────────────────────────┬─────────────────────────────────────────┘
                                 │ REST + SSE
@@ -79,7 +118,7 @@ QuestionGeneration AI is an intelligent exam question generation platform that l
 │                         BACKEND (FastAPI)                                │
 │  ┌──────────────────────────────────────────────────────────────────┐   │
 │  │                         API Layer (v1)                            │   │
-│  │  /auth  │  /documents  │  /questions  │  /subjects  │  /rubrics  │   │
+│  │ /auth │ /documents │ /questions │ /subjects │ /tests │ /learn    │   │
 │  └──────────────────────────────────────────────────────────────────┘   │
 │                                    │                                     │
 │  ┌─────────────┐  ┌─────────────┐  │  ┌─────────────┐  ┌─────────────┐  │
@@ -87,35 +126,41 @@ QuestionGeneration AI is an intelligent exam question generation platform that l
 │  │  Service    │  │  Service    │  │  │  Service    │  │  Service    │  │
 │  └─────────────┘  └──────┬──────┘  │  └─────────────┘  └─────────────┘  │
 │                          │         │                                     │
-│                          ▼         │                                     │
-│               ┌─────────────────┐  │                                     │
-│               │   LLM Service   │◄─┘                                     │
-│               │   (Ollama)      │                                        │
-│               └─────────────────┘                                        │
+│  ┌─────────────┐  ┌──────┴──────┐  │  ┌─────────────┐  ┌─────────────┐  │
+│  │ Gamification│  │   LLM       │◄─┘  │    Test     │  │   Tutor     │  │
+│  │   Service   │  │  Service    │     │   Service   │  │  Service    │  │
+│  └─────────────┘  └─────────────┘     └─────────────┘  └─────────────┘  │
 └───────────────────────────┬─────────────────────────────────────────────┘
                             │
         ┌───────────────────┼───────────────────┐
         ▼                   ▼                   ▼
 ┌───────────────┐   ┌───────────────┐   ┌───────────────┐
-│  PostgreSQL   │   │    Redis      │   │    Ollama     │
+│  PostgreSQL   │   │    Redis      │   │ Ollama/Gemini │
 │  + pgvector   │   │    Cache      │   │    LLM        │
 │               │   │               │   │               │
 │ • Users       │   │ • JWT tokens  │   │ • llama3.2    │
-│ • Documents   │   │ • Rate limits │   │ • mistral     │
-│ • Chunks      │   │ • Embeddings  │   │ • qwen        │
-│ • Questions   │   │ • Sessions    │   │               │
-│ • Embeddings  │   │               │   │               │
+│ • Documents   │   │ • Rate limits │   │ • gemini-2.0  │
+│ • Questions   │   │ • Embeddings  │   │ • mistral     │
+│ • Tests       │   │ • Sessions    │   │               │
+│ • Progress    │   │               │   │               │
+│ • XP/Streaks  │   │               │   │               │
 └───────────────┘   └───────────────┘   └───────────────┘
 ```
 
 ### Directory Structure
 
 ```
-qgen_llm_2/
+campuslearn/
 ├── backend/                    # FastAPI Backend
 │   ├── app/
 │   │   ├── api/v1/            # API routes
 │   │   │   ├── endpoints/     # Individual endpoint modules
+│   │   │   │   ├── auth.py        # Authentication
+│   │   │   │   ├── documents.py   # Document upload/management
+│   │   │   │   ├── questions.py   # Question generation
+│   │   │   │   ├── learn.py       # Gamified learning endpoints
+│   │   │   │   ├── tests.py       # Test CRUD & submissions
+│   │   │   │   └── subjects.py    # Subject management
 │   │   │   ├── deps.py        # Dependencies (auth, db)
 │   │   │   └── router.py      # Route aggregation
 │   │   ├── core/              # Core configuration
@@ -124,12 +169,21 @@ qgen_llm_2/
 │   │   │   ├── logging.py     # Structured logging
 │   │   │   └── security.py    # JWT & password hashing
 │   │   ├── models/            # SQLAlchemy ORM models
+│   │   │   ├── user.py            # User, roles
+│   │   │   ├── document.py        # Documents, chunks
+│   │   │   ├── question.py        # Questions, answers
+│   │   │   ├── gamification.py    # XP, streaks, progress
+│   │   │   └── test.py            # Tests, submissions
 │   │   ├── schemas/           # Pydantic schemas
 │   │   └── services/          # Business logic
 │   │       ├── document_service.py    # PDF processing, chunking
 │   │       ├── embedding_service.py   # Sentence transformers
-│   │       ├── llm_service.py         # Ollama integration
+│   │       ├── llm_service.py         # Ollama/Gemini integration
+│   │       ├── gemini_service.py      # Google Gemini API
 │   │       ├── question_service.py    # RAG pipeline
+│   │       ├── gamification_service.py # XP, streaks, leaderboards
+│   │       ├── test_service.py        # Test management
+│   │       ├── tutor_service.py       # AI tutor feedback
 │   │       ├── reranker_service.py    # Cross-encoder
 │   │       └── redis_service.py       # Cache operations
 │   ├── alembic/               # Database migrations
@@ -140,13 +194,22 @@ qgen_llm_2/
 │
 ├── client/                    # React Native (Expo) App
 │   ├── app/                   # Expo Router screens
-│   │   ├── (auth)/           # Authentication screens
+│   │   ├── (auth)/           # Login & registration
 │   │   └── (tabs)/           # Main app tabs
-│   │       ├── home/         # Dashboard screens
-│   │       └── quick-generate/
+│   │       ├── home/         # Dashboard & profile
+│   │       ├── generate/     # Quick question generation
+│   │       ├── history/      # Question history & review
+│   │       ├── learn/        # Gamified learning (student)
+│   │       ├── tests/        # Test creation & management
+│   │       ├── leaderboard/  # Rankings & competition
+│   │       └── profile/      # User settings & stats
 │   ├── components/           # Reusable UI components
+│   │   ├── ui/               # Core UI (buttons, cards, etc.)
+│   │   └── gamification/     # XP bars, hearts, streaks
 │   ├── services/             # API client services
 │   ├── stores/               # Zustand state management
+│   │   ├── authStore.ts      # Authentication state
+│   │   └── learningStore.ts  # Gamification state
 │   └── constants/            # Theme & config
 │
 ├── docker-compose.yml        # Container orchestration
@@ -169,8 +232,8 @@ qgen_llm_2/
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/qgen_llm_2.git
-cd qgen_llm_2
+git clone https://github.com/yourusername/campuslearn.git
+cd campuslearn
 
 # Copy environment template
 cp .env.example .env
@@ -398,11 +461,6 @@ CHUNK_SIZE=1000
 CHUNK_OVERLAP=200
 
 # =============================================================================
-# Question Generation
-# =============================================================================
-MAX_QUESTIONS_PER_REQUEST=50
-
-# =============================================================================
 # Rate Limiting
 # =============================================================================
 RATE_LIMIT_REQUESTS=100
@@ -474,6 +532,41 @@ alembic upgrade head
 # Rollback one migration
 alembic downgrade -1
 ```
+
+#### Running Migrations for AI Tutor Feedback
+
+If you just pulled changes that include the `006_add_tutor_feedback` migration, run:
+
+```bash
+# One-liner: apply the latest migration from host (no need to enter the container)
+docker-compose exec api alembic upgrade head
+
+# Or step-by-step:
+# 1. Make sure your containers are running
+docker-compose up -d
+
+# 2. Enter the API container
+docker-compose exec api bash
+
+# 3. Check current migration status
+alembic current
+
+# 4. Apply all pending migrations
+alembic upgrade head
+
+# 5. Verify the migration was applied
+alembic current
+# Should show: 006_add_tutor_feedback (head)
+
+# 6. Exit the container
+exit
+```
+
+> **Note:** If you encounter migration errors, you can reset and reapply:
+> ```bash
+> docker-compose exec api alembic downgrade base
+> docker-compose exec api alembic upgrade head
+> ```
 
 ### Rebuilding Services
 
@@ -656,13 +749,14 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 🙏 Acknowledgments
 
 - [Ollama](https://ollama.ai/) - Local LLM inference
+- [Google Gemini](https://ai.google.dev/) - Cloud-based LLM API
 - [Sentence Transformers](https://www.sbert.net/) - Embedding models
 - [pgvector](https://github.com/pgvector/pgvector) - Vector similarity for PostgreSQL
 - [FastAPI](https://fastapi.tiangolo.com/) - Modern Python web framework
 - [Expo](https://expo.dev/) - React Native development platform
+- [Zustand](https://github.com/pmndrs/zustand) - Lightweight state management
 
 ---
 
 <div align="center">
-  <sub>Built with ❤️ for educators everywhere</sub>
-</div>
+  <sub>Built with ❤️ for educators and students everywhere</sub>

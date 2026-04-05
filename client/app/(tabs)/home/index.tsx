@@ -41,9 +41,10 @@ export default function HomeScreen() {
     }
     return user.avatar_url;
   };
-  
+
   const [stats, setStats] = useState<DashboardStats>({ subjectsCount: 0, approvalRate: 0 });
   const [vettingStats, setVettingStats] = useState<VettingStats | null>(null);
+  const [pendingEnrollments, setPendingEnrollments] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -51,16 +52,18 @@ export default function HomeScreen() {
   const loadData = useCallback(async () => {
     try {
       setError(null);
-      const [subjectsResponse, vettingResponse] = await Promise.all([
+      const [subjectsResponse, vettingResponse, enrollmentsData] = await Promise.all([
         subjectsService.listSubjects(1, 100),
         vettingService.getVettingStats(),
+        subjectsService.getAllEnrollments('pending').catch(() => []),
       ]);
-      
+
       setStats({
         subjectsCount: subjectsResponse.pagination.total,
         approvalRate: vettingResponse.approval_rate,
       });
       setVettingStats(vettingResponse);
+      setPendingEnrollments(enrollmentsData.length);
     } catch (error: any) {
       console.error('Failed to load dashboard data:', error);
       setError(error?.message || 'Failed to load dashboard data');
@@ -123,7 +126,7 @@ export default function HomeScreen() {
       <View style={[styles.loadingContainer, { backgroundColor: colors.background }]}>
         <IconSymbol name="exclamationmark.triangle.fill" size={48} color={colors.error} />
         <Text style={[styles.errorText, { color: colors.error }]}>{error}</Text>
-        <NativeButton 
+        <NativeButton
           title="Retry"
           onPress={loadData}
           variant="primary"
@@ -131,6 +134,8 @@ export default function HomeScreen() {
       </View>
     );
   }
+
+  const avatarUrl = getAvatarUrl();
 
   return (
     <ScrollView
@@ -154,12 +159,12 @@ export default function HomeScreen() {
           </View>
           <TouchableOpacity
             onPress={() => router.push('/(tabs)/home/profile')}
-            style={[styles.profileButton, { backgroundColor: getAvatarUrl() ? 'transparent' : colors.primary + '15' }]}
+            style={[styles.profileButton, { backgroundColor: avatarUrl ? 'transparent' : colors.primary + '15' }]}
             activeOpacity={0.8}
           >
-            {getAvatarUrl() ? (
+            {avatarUrl ? (
               <Image
-                source={{ uri: getAvatarUrl() }}
+                source={{ uri: avatarUrl }}
                 style={styles.profileImage}
               />
             ) : (
@@ -183,24 +188,28 @@ export default function HomeScreen() {
             <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Subjects</Text>
           </GlassCard>
         </View>
-        
-        {/* <View style={styles.statCardWrapper}>
+
+        <TouchableOpacity
+          style={styles.statCardWrapper}
+          onPress={() => router.push('/(tabs)/home/enrollments')}
+          activeOpacity={0.7}
+        >
           <GlassCard style={styles.statCard}>
             <LinearGradient
-              colors={colors.gradientGreen as [string, string]}
+              colors={colors.gradientOrange as [string, string]}
               style={styles.statIconContainer}
             >
-              <IconSymbol name="checkmark.circle.fill" size={22} color="#FFFFFF" />
+              <IconSymbol name="person.2.fill" size={22} color="#FFFFFF" />
             </LinearGradient>
-            <Text style={[styles.statValue, { color: colors.text }]}>{stats.approvalRate.toFixed(0)}%</Text>
-            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Accuracy</Text>
+            <Text style={[styles.statValue, { color: colors.text }]}>{pendingEnrollments}</Text>
+            <Text style={[styles.statLabel, { color: colors.textSecondary }]}>Pending Enrollments</Text>
           </GlassCard>
-        </View> */}
+        </TouchableOpacity>
       </View>
 
-            {/* Navigation Section */}
+      {/* Navigation Section */}
       <Text style={[styles.sectionHeader, { color: colors.text }]}>Quick Actions</Text>
-      
+
       {/* Menu Items - iOS 26 Grid Style */}
       <View style={styles.menuGrid}>
         {menuItems.map((item, index) => (
@@ -215,12 +224,12 @@ export default function HomeScreen() {
             activeOpacity={0.7}
           >
             <GlassCard style={styles.menuGridCard}>
-              <View style={[styles.menuGridIconBg, { backgroundColor: item.gradient[0] + '20' }]}> 
-                <IconSymbol 
-                  name={item.icon as any} 
-                  size={28} 
-                  color={item.gradient[0]} 
-                  weight="semibold" 
+              <View style={[styles.menuGridIconBg, { backgroundColor: item.gradient[0] + '20' }]}>
+                <IconSymbol
+                  name={item.icon as any}
+                  size={28}
+                  color={item.gradient[0]}
+                  weight="semibold"
                 />
               </View>
               <Text style={[styles.menuGridTitle, { color: colors.text }]} numberOfLines={1}>

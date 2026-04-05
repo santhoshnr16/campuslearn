@@ -16,7 +16,8 @@ import {
   Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { Colors, Spacing, FontSizes, BorderRadius } from '@/constants/theme';
 import { IconSymbol } from '@/components/ui/icon-symbol';
@@ -24,6 +25,7 @@ import { GlassCard } from '@/components/ui/glass-card';
 import { NativeButton } from '@/components/ui/native-button';
 import { subjectsService, Subject, Topic } from '@/services/subjects';
 import { testsService, DifficultyLevelConfig, TopicSelection } from '@/services/tests';
+import Slider from '@react-native-community/slider';
 
 type Step = 'basics' | 'generation_type' | 'difficulty' | 'topics' | 'review';
 
@@ -37,10 +39,10 @@ export default function CreateTestScreen() {
   const colorScheme = useColorScheme() ?? 'light';
   const colors = Colors[colorScheme];
   const router = useRouter();
+  const insets = useSafeAreaInsets();
 
   // Flow state
   const [step, setStep] = useState<Step>('basics');
-  const [isLoading, setIsLoading] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
 
   // Subjects & topics
@@ -133,6 +135,28 @@ export default function CreateTestScreen() {
     );
   };
 
+  // For topic-wise tests, compute how difficulties distribute across topic questions
+  const getTopicDifficultyDistribution = () => {
+    // Build difficulty pool from enabled levels
+    const pool: ('easy' | 'medium' | 'hard')[] = [];
+    (['easy', 'medium', 'hard'] as const).forEach((level) => {
+      if (difficulty[level].enabled) {
+        const count = parseInt(difficulty[level].count) || 1;
+        for (let i = 0; i < count; i++) pool.push(level);
+      }
+    });
+    if (pool.length === 0) pool.push('easy', 'medium', 'hard');
+
+    // Distribute topic questions across the pool
+    const totalQuestions = selectedTopics.reduce((sum, t) => sum + (parseInt(t.count) || 0), 0);
+    const distribution = { easy: 0, medium: 0, hard: 0 };
+    for (let i = 0; i < totalQuestions; i++) {
+      const level = pool[i % pool.length];
+      distribution[level]++;
+    }
+    return distribution;
+  };
+
   const getTotalQuestions = () => {
     if (generationType === 'subject_wise') {
       let total = 0;
@@ -204,10 +228,10 @@ export default function CreateTestScreen() {
       const topicConfig: TopicSelection[] | undefined =
         generationType !== 'subject_wise' && selectedTopics.length > 0
           ? selectedTopics.map((t) => ({
-              topic_id: t.topic_id,
-              count: parseInt(t.count) || 5,
-              topic_name: t.topic_name,
-            }))
+            topic_id: t.topic_id,
+            count: parseInt(t.count) || 5,
+            topic_name: t.topic_name,
+          }))
           : undefined;
 
       // 1. Create the test
@@ -222,12 +246,12 @@ export default function CreateTestScreen() {
         duration_minutes: durationMinutes ? parseInt(durationMinutes) : undefined,
       });
 
-      // 2. Generate questions from approved pool
+      // 2. Generate questions via AI (this may take a while)
       const result = await testsService.generateQuestions(test.id);
 
       Alert.alert(
         'Test Created!',
-        `${result.questions_added} questions selected (${result.total_marks} marks total). You can review and edit before publishing.`,
+        `${result.questions_added} questions generated via AI (${result.total_marks} marks total). You can review and edit before publishing.`,
         [
           {
             text: 'Review Test',
@@ -418,139 +442,154 @@ export default function CreateTestScreen() {
     </View>
   );
 
-  const renderDifficultyStep = () => (
-    <View style={styles.stepContent}>
-      <Text style={[styles.stepTitle, { color: colors.text }]}>Difficulty Configuration</Text>
-      <Text style={[styles.stepDescription, { color: colors.textSecondary }]}>
-        Set number of questions and LO mappings per difficulty level
-      </Text>
+  const renderDifficultyStep = () => {
+    const isTopicBased = generationType !== 'subject_wise';
+    return (
+      <View style={styles.stepContent}>
+        <Text style={[styles.stepTitle, { color: colors.text }]}>Difficulty Configuration</Text>
+        <Text style={[styles.stepDescription, { color: colors.textSecondary }]}>
+          {isTopicBased
+            ? 'Enable difficulty levels — questions will be distributed proportionally across your topic counts'
+            : 'Set number of questions and LO mappings per difficulty level'}
+        </Text>
 
-      {(['easy', 'medium', 'hard'] as const).map((level) => (
-        <GlassCard key={level} style={styles.difficultyCard}>
-          <TouchableOpacity
-            style={styles.diffHeader}
-            onPress={() =>
-              setDifficulty((prev) => ({
-                ...prev,
-                [level]: { ...prev[level], enabled: !prev[level].enabled },
-              }))
-            }
-          >
-            <View style={styles.diffHeaderLeft}>
-              <IconSymbol
-                name={difficulty[level].enabled ? 'checkmark.square.fill' : 'square'}
-                size={22}
-                color={difficulty[level].enabled ? colors.primary : colors.textTertiary}
-              />
-              <Text style={[styles.diffTitle, { color: colors.text }]}>
-                {level.charAt(0).toUpperCase() + level.slice(1)}
-              </Text>
-            </View>
-            <View
-              style={[
-                styles.diffBadge,
-                {
-                  backgroundColor:
-                    level === 'easy'
-                      ? colors.success + '20'
-                      : level === 'medium'
-                      ? colors.warning + '20'
-                      : colors.error + '20',
-                },
-              ]}
+        {(['easy', 'medium', 'hard'] as const).map((level) => (
+          <GlassCard key={level} style={styles.difficultyCard}>
+            <TouchableOpacity
+              style={styles.diffHeader}
+              onPress={() =>
+                setDifficulty((prev) => ({
+                  ...prev,
+                  [level]: { ...prev[level], enabled: !prev[level].enabled },
+                }))
+              }
             >
-              <Text
+              <View style={styles.diffHeaderLeft}>
+                <IconSymbol
+                  name={difficulty[level].enabled ? 'checkmark.square.fill' : 'square'}
+                  size={22}
+                  color={difficulty[level].enabled ? colors.primary : colors.textTertiary}
+                />
+                <Text style={[styles.diffTitle, { color: colors.text }]}>
+                  {level.charAt(0).toUpperCase() + level.slice(1)}
+                </Text>
+              </View>
+              <View
                 style={[
-                  styles.diffBadgeText,
+                  styles.diffBadge,
                   {
-                    color:
+                    backgroundColor:
                       level === 'easy'
-                        ? colors.success
+                        ? colors.success + '20'
                         : level === 'medium'
-                        ? colors.warning
-                        : colors.error,
+                          ? colors.warning + '20'
+                          : colors.error + '20',
                   },
                 ]}
               >
-                {level === 'easy' ? '1 mark' : level === 'medium' ? '2 marks' : '3 marks'}
-              </Text>
-            </View>
-          </TouchableOpacity>
-
-          {difficulty[level].enabled && (
-            <View style={styles.diffBody}>
-              <View style={styles.countRow}>
-                <Text style={[styles.countLabel, { color: colors.textSecondary }]}>
-                  Number of questions:
-                </Text>
-                <TextInput
+                <Text
                   style={[
-                    styles.countInput,
-                    { backgroundColor: colors.backgroundSecondary, color: colors.text, borderColor: colors.border },
+                    styles.diffBadgeText,
+                    {
+                      color:
+                        level === 'easy'
+                          ? colors.success
+                          : level === 'medium'
+                            ? colors.warning
+                            : colors.error,
+                    },
                   ]}
-                  value={difficulty[level].count}
-                  onChangeText={(v) =>
-                    setDifficulty((prev) => ({
-                      ...prev,
-                      [level]: { ...prev[level], count: v },
-                    }))
-                  }
-                  keyboardType="numeric"
-                  maxLength={3}
-                />
+                >
+                  {level === 'easy' ? '1 mark' : level === 'medium' ? '2 marks' : '3 marks'}
+                </Text>
               </View>
+            </TouchableOpacity>
 
-              {learningOutcomes.length > 0 && (
-                <View style={styles.loSection}>
-                  <Text style={[styles.loLabel, { color: colors.textSecondary }]}>
-                    Learning Outcomes:
-                  </Text>
-                  <View style={styles.loChips}>
-                    {learningOutcomes.map((lo) => (
-                      <TouchableOpacity
-                        key={lo}
-                        style={[
-                          styles.loChip,
-                          {
-                            backgroundColor: difficulty[level].lo_mapping.includes(lo)
-                              ? colors.primary
-                              : colors.backgroundSecondary,
-                            borderColor: difficulty[level].lo_mapping.includes(lo)
-                              ? colors.primary
-                              : colors.border,
-                          },
-                        ]}
-                        onPress={() => toggleLO(level, lo)}
-                      >
-                        <Text
+            {difficulty[level].enabled && (
+              <View style={styles.diffBody}>
+                <View style={styles.sliderRow}>
+                  <View style={styles.sliderLabelRow}>
+                    <Text style={[styles.countLabel, { color: colors.textSecondary }]}>
+                      {isTopicBased ? 'Weight' : 'Questions'}
+                    </Text>
+                    <View style={[styles.sliderValueBadge, { backgroundColor: colors.primary + '20' }]}>
+                      <Text style={[styles.sliderValueText, { color: colors.primary }]}>
+                        {isTopicBased
+                          ? `${difficulty[level].count || '1'} → ${getTopicDifficultyDistribution()[level]} questions`
+                          : difficulty[level].count || '0'}
+                      </Text>
+                    </View>
+                  </View>
+                  <Slider
+                    style={styles.slider}
+                    minimumValue={isTopicBased ? 1 : 0}
+                    maximumValue={isTopicBased ? 10 : 20}
+                    step={1}
+                    value={parseInt(difficulty[level].count) || (isTopicBased ? 1 : 0)}
+                    onValueChange={(v: number) =>
+                      setDifficulty((prev) => ({
+                        ...prev,
+                        [level]: { ...prev[level], count: String(Math.round(v)) },
+                      }))
+                    }
+                    minimumTrackTintColor={colors.primary}
+                    maximumTrackTintColor={colors.border}
+                    thumbTintColor={colors.primary}
+                  />
+                </View>
+
+                {learningOutcomes.length > 0 && (
+                  <View style={styles.loSection}>
+                    <Text style={[styles.loLabel, { color: colors.textSecondary }]}>
+                      Learning Outcomes:
+                    </Text>
+                    <View style={styles.loChips}>
+                      {learningOutcomes.map((lo) => (
+                        <TouchableOpacity
+                          key={lo}
                           style={[
-                            styles.loChipText,
+                            styles.loChip,
                             {
-                              color: difficulty[level].lo_mapping.includes(lo)
-                                ? '#FFFFFF'
-                                : colors.text,
+                              backgroundColor: difficulty[level].lo_mapping.includes(lo)
+                                ? colors.primary
+                                : colors.backgroundSecondary,
+                              borderColor: difficulty[level].lo_mapping.includes(lo)
+                                ? colors.primary
+                                : colors.border,
                             },
                           ]}
+                          onPress={() => toggleLO(level, lo)}
                         >
-                          {lo}
-                        </Text>
-                      </TouchableOpacity>
-                    ))}
+                          <Text
+                            style={[
+                              styles.loChipText,
+                              {
+                                color: difficulty[level].lo_mapping.includes(lo)
+                                  ? '#FFFFFF'
+                                  : colors.text,
+                              },
+                            ]}
+                          >
+                            {lo}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
                   </View>
-                </View>
-              )}
-            </View>
-          )}
-        </GlassCard>
-      ))}
+                )}
+              </View>
+            )}
+          </GlassCard>
+        ))}
 
-      <View style={[styles.totalBar, { backgroundColor: colors.backgroundSecondary }]}>
-        <Text style={[styles.totalText, { color: colors.text }]}>
-          Total Questions: {getTotalQuestions()}
-        </Text>
+        <View style={styles.totalBar}>
+          <Text style={[styles.totalText, { color: colors.text }]}>
+            Total Questions: {getTotalQuestions()}
+          </Text>
+        </View>
       </View>
-    </View>
-  );
+    );
+  };
 
   const renderTopicsStep = () => (
     <View style={styles.stepContent}>
@@ -589,19 +628,27 @@ export default function CreateTestScreen() {
                 </View>
               </TouchableOpacity>
               {isSelected && (
-                <View style={styles.topicCountRow}>
-                  <Text style={[styles.countLabel, { color: colors.textSecondary }]}>
-                    Questions:
-                  </Text>
-                  <TextInput
-                    style={[
-                      styles.countInput,
-                      { backgroundColor: colors.backgroundSecondary, color: colors.text, borderColor: colors.border },
-                    ]}
-                    value={topicEntry?.count || '5'}
-                    onChangeText={(v) => updateTopicCount(topic.id, v)}
-                    keyboardType="numeric"
-                    maxLength={3}
+                <View style={styles.sliderRow}>
+                  <View style={styles.sliderLabelRow}>
+                    <Text style={[styles.countLabel, { color: colors.textSecondary }]}>
+                      Questions
+                    </Text>
+                    <View style={[styles.sliderValueBadge, { backgroundColor: colors.primary + '20' }]}>
+                      <Text style={[styles.sliderValueText, { color: colors.primary }]}>
+                        {topicEntry?.count || '5'}
+                      </Text>
+                    </View>
+                  </View>
+                  <Slider
+                    style={styles.slider}
+                    minimumValue={1}
+                    maximumValue={20}
+                    step={1}
+                    value={parseInt(topicEntry?.count || '5')}
+                    onValueChange={(v: number) => updateTopicCount(topic.id, String(Math.round(v)))}
+                    minimumTrackTintColor={colors.primary}
+                    maximumTrackTintColor={colors.border}
+                    thumbTintColor={colors.primary}
                   />
                 </View>
               )}
@@ -611,7 +658,7 @@ export default function CreateTestScreen() {
       )}
 
       {selectedTopics.length > 0 && (
-        <View style={[styles.totalBar, { backgroundColor: colors.backgroundSecondary }]}>
+        <View style={styles.totalBar}>
           <Text style={[styles.totalText, { color: colors.text }]}>
             Total Questions: {getTotalQuestions()}
           </Text>
@@ -653,25 +700,29 @@ export default function CreateTestScreen() {
           </View>
         )}
 
-        <View style={styles.reviewDivider} />
+        {generationType === 'subject_wise' && (
+          <>
+            <View style={styles.reviewDivider} />
 
-        <Text style={[styles.reviewSectionTitle, { color: colors.text }]}>Difficulty Distribution</Text>
-        {(['easy', 'medium', 'hard'] as const).map(
-          (level) =>
-            difficulty[level].enabled &&
-            parseInt(difficulty[level].count) > 0 && (
-              <View key={level} style={styles.reviewRow}>
-                <Text style={[styles.reviewLabel, { color: colors.textSecondary }]}>
-                  {level.charAt(0).toUpperCase() + level.slice(1)}
-                </Text>
-                <Text style={[styles.reviewValue, { color: colors.text }]}>
-                  {difficulty[level].count} questions
-                  {difficulty[level].lo_mapping.length > 0
-                    ? ` (${difficulty[level].lo_mapping.join(', ')})`
-                    : ''}
-                </Text>
-              </View>
-            )
+            <Text style={[styles.reviewSectionTitle, { color: colors.text }]}>Difficulty Distribution</Text>
+            {(['easy', 'medium', 'hard'] as const).map(
+              (level) =>
+                difficulty[level].enabled &&
+                parseInt(difficulty[level].count) > 0 && (
+                  <View key={level} style={styles.reviewRow}>
+                    <Text style={[styles.reviewLabel, { color: colors.textSecondary }]}>
+                      {level.charAt(0).toUpperCase() + level.slice(1)}
+                    </Text>
+                    <Text style={[styles.reviewValue, { color: colors.text }]}>
+                      {difficulty[level].count} questions
+                      {difficulty[level].lo_mapping.length > 0
+                        ? ` (${difficulty[level].lo_mapping.join(', ')})`
+                        : ''}
+                    </Text>
+                  </View>
+                )
+            )}
+          </>
         )}
 
         {generationType !== 'subject_wise' && selectedTopics.length > 0 && (
@@ -688,6 +739,25 @@ export default function CreateTestScreen() {
                 </Text>
               </View>
             ))}
+
+            <View style={styles.reviewDivider} />
+            <Text style={[styles.reviewSectionTitle, { color: colors.text }]}>Difficulty Distribution</Text>
+            {(() => {
+              const dist = getTopicDifficultyDistribution();
+              return (['easy', 'medium', 'hard'] as const).map(
+                (level) =>
+                  dist[level] > 0 && (
+                    <View key={level} style={styles.reviewRow}>
+                      <Text style={[styles.reviewLabel, { color: colors.textSecondary }]}>
+                        {level.charAt(0).toUpperCase() + level.slice(1)}
+                      </Text>
+                      <Text style={[styles.reviewValue, { color: colors.text }]}>
+                        {dist[level]} questions
+                      </Text>
+                    </View>
+                  )
+              );
+            })()}
           </>
         )}
 
@@ -701,24 +771,17 @@ export default function CreateTestScreen() {
           </Text>
         </View>
       </GlassCard>
-
-      <View style={styles.generateNote}>
-        <IconSymbol name="info.circle.fill" size={16} color={colors.info} />
-        <Text style={[styles.generateNoteText, { color: colors.textSecondary }]}>
-          Questions will be selected from your approved question bank. You can review and edit them before publishing.
-        </Text>
-      </View>
     </View>
   );
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['bottom']}>
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
-        {/* Progress */}
-        <View style={styles.progressContainer}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+        <KeyboardAvoidingView
+          style={styles.flex}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          {/* Progress */}
+          <View style={styles.progressContainer}>
           {(['basics', 'generation_type', ...(generationType !== 'subject_wise' ? ['topics'] : []), 'difficulty', 'review'] as Step[]).map(
             (s, idx, arr) => (
               <View key={s} style={styles.progressItem}>
@@ -747,7 +810,7 @@ export default function CreateTestScreen() {
           )}
         </View>
 
-        <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+        <ScrollView contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 100 }]} keyboardShouldPersistTaps="handled">
           {step === 'basics' && renderBasicsStep()}
           {step === 'generation_type' && renderGenerationTypeStep()}
           {step === 'difficulty' && renderDifficultyStep()}
@@ -756,11 +819,11 @@ export default function CreateTestScreen() {
         </ScrollView>
 
         {/* Bottom Actions */}
-        <View style={[styles.bottomBar, { backgroundColor: colors.card, borderTopColor: colors.border }]}>
+        <View style={[styles.bottomBar, { paddingBottom: insets.bottom + Spacing.md + 60 }]}>
           {step !== 'basics' && (
             <NativeButton
               title="Back"
-              variant="outline"
+              variant="secondary"
               size="medium"
               icon="chevron.left"
               iconPosition="left"
@@ -772,7 +835,7 @@ export default function CreateTestScreen() {
             <NativeButton
               title="Generate Test"
               variant="primary"
-              size="large"
+              size="medium"
               icon="sparkles"
               iconPosition="left"
               onPress={handleCreateAndGenerate}
@@ -792,7 +855,7 @@ export default function CreateTestScreen() {
           )}
         </View>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -804,7 +867,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: Spacing.xl,
-    paddingTop: Spacing.md,
+    paddingTop: 120,
     paddingBottom: Spacing.sm,
   },
   progressItem: {
@@ -936,6 +999,31 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: FontSizes.md,
   },
+  sliderRow: {
+    paddingTop: Spacing.xs,
+    paddingBottom: Spacing.sm,
+  },
+  sliderLabelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 2,
+  },
+  sliderValueBadge: {
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 2,
+    borderRadius: BorderRadius.sm,
+    minWidth: 32,
+    alignItems: 'center',
+  },
+  sliderValueText: {
+    fontSize: FontSizes.md,
+    fontWeight: '700' as const,
+  },
+  slider: {
+    width: '100%',
+    height: 36,
+  },
   loSection: {
     gap: 6,
   },
@@ -1041,12 +1129,21 @@ const styles = StyleSheet.create({
     flex: 1,
     lineHeight: 18,
   },
+  distributionPreview: {
+    paddingVertical: Spacing.xs,
+  },
+  distributionText: {
+    fontSize: FontSizes.sm,
+    fontStyle: 'italic',
+  },
   bottomBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.md,
-    borderTopWidth: 1,
-    paddingBottom: 60, // Extra space for iOS safe area
+    paddingTop: Spacing.md,
   },
 });

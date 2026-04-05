@@ -173,7 +173,11 @@ export const testsService = {
   // ========================
 
   async generateQuestions(testId: string): Promise<GenerateResult> {
-    const response = await api.post<GenerateResult>(`/tests/${testId}/generate`);
+    const response = await api.post<GenerateResult>(
+      `/tests/${testId}/generate`,
+      {},
+      { timeout: 1000000 } // 16 min timeout for LLM generation
+    );
     return response.data;
   },
 

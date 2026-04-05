@@ -13,6 +13,7 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as Haptics from 'expo-haptics';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { Colors, Spacing, FontSizes, BorderRadius } from '@/constants/theme';
 import { useLearningStore } from '@/stores/learningStore';
@@ -33,6 +34,7 @@ export default function LessonScreen() {
   const [answers, setAnswers] = useState<AnswerSubmission[]>([]);
   const [hearts, setHearts] = useState(5);
   const [lessonStartTime, setLessonStartTime] = useState<number | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     if (params.subjectId) {
@@ -53,21 +55,25 @@ export default function LessonScreen() {
 
   const handleSelectAnswer = (answer: string) => {
     if (showResult) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setSelectedAnswer(answer);
   };
 
   const handleCheckAnswer = () => {
     if (!selectedAnswer || !currentQuestion) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
-    // Don't validate client-side - the backend validates actual correctness on submission.
-    // Just record the answer and move to next question.
+    // Extract just the option letter (e.g. "A" from "A) Some answer text...")
+    // The backend stores correct_answer as just the letter (A, B, C, D)
+    const answerLetter = selectedAnswer.charAt(0).toUpperCase();
+
     setShowResult(true);
 
     setAnswers((prev) => [
       ...prev,
       {
         question_id: currentQuestion.id,
-        selected_answer: selectedAnswer,
+        selected_answer: answerLetter,
       },
     ]);
   };
@@ -78,6 +84,7 @@ export default function LessonScreen() {
       setSelectedAnswer(null);
       setShowResult(false);
     } else {
+      setIsSubmitting(true);
       const totalTime = lessonStartTime ? Math.round((Date.now() - lessonStartTime) / 1000) : 0;
       await submitLesson(
         params.subjectId,
@@ -159,8 +166,8 @@ export default function LessonScreen() {
                   currentQuestion.difficulty_level === 'hard'
                     ? '#FF3B3020'
                     : currentQuestion.difficulty_level === 'medium'
-                    ? '#FF950020'
-                    : '#34C75920',
+                      ? '#FF950020'
+                      : '#34C75920',
               },
             ]}
           >
@@ -172,8 +179,8 @@ export default function LessonScreen() {
                     currentQuestion.difficulty_level === 'hard'
                       ? '#FF3B30'
                       : currentQuestion.difficulty_level === 'medium'
-                      ? '#FF9500'
-                      : '#34C759',
+                        ? '#FF9500'
+                        : '#34C759',
                 },
               ]}
             >
@@ -259,7 +266,7 @@ export default function LessonScreen() {
       </ScrollView>
 
       {/* Bottom Action */}
-      <View style={[styles.bottomBar, { backgroundColor: colors.background }]}>
+      <View style={[styles.bottomBar, { backgroundColor: colors.background, paddingBottom: 120 }]}>
         {!showResult ? (
           <TouchableOpacity
             style={[
@@ -284,10 +291,15 @@ export default function LessonScreen() {
           <TouchableOpacity
             style={[styles.actionButton, { backgroundColor: colors.primary }]}
             onPress={handleNext}
+            disabled={isSubmitting}
           >
-            <Text style={styles.actionButtonText}>
-              {currentIndex < questions.length - 1 ? 'Continue' : 'Finish'}
-            </Text>
+            {isSubmitting ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.actionButtonText}>
+                {currentIndex < questions.length - 1 ? 'Continue' : 'Finish'}
+              </Text>
+            )}
           </TouchableOpacity>
         )}
       </View>

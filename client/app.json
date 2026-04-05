@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "client",
-    "slug": "client",
+    "name": "Campus Learn",
+    "slug": "campuslearn",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "client",
+    "scheme": "campuslearn",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
@@ -15,7 +15,7 @@
         "NSMicrophoneUsageDescription": "Allow $(PRODUCT_NAME) to use the microphone.",
         "ITSAppUsesNonExemptEncryption": false
       },
-      "bundleIdentifier": "com.shrishesha.client"
+      "bundleIdentifier": "com.shrishesha.campuslearn"
     },
     "android": {
       "adaptiveIcon": {
@@ -30,7 +30,7 @@
         "android.permission.RECORD_AUDIO",
         "android.permission.RECORD_AUDIO"
       ],
-      "package": "com.shrishesha.client"
+      "package": "com.shrishesha.campuslearn"
     },
     "web": {
       "output": "static",

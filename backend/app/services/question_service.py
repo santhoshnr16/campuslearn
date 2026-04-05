@@ -36,6 +36,9 @@ from app.services.reranker_service import RerankerService
 from app.services.novelty_service import NoveltyService, NoveltyResult
 from app.core.config import settings
 
+import logging
+logger = logging.getLogger(__name__)
+
 
 # System prompts for question generation
 SYSTEM_PROMPT_MCQ = """You are an expert educator creating CHALLENGING examination questions for university students.
@@ -948,8 +951,7 @@ Output valid JSON only."""
         Returns both the ORM object (for embedding access) and the 
         QuestionResponse (for SSE serialization without lazy loading issues).
         """
-        import logging
-        logger = logging.getLogger(__name__)
+
         
         # Validate question quality if chunks provided
         confidence_score = 0.8  # Default confidence

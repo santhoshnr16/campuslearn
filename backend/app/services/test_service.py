@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.test import Test, TestQuestion, TestSubmission
-from app.models.question import Question
+from app.models.question import Question, GenerationSession
 from app.models.subject import Subject, Topic
 from app.models.user import User
 from app.core.logging import logger
@@ -140,9 +140,20 @@ class TestService:
 
     async def generate_test_questions(self, test_id: UUID, teacher_id: UUID) -> dict:
         """
-        Generate questions for a test from the approved questions pool.
-        Uses the test's difficulty_config and topic_config to select questions.
+        Generate NEW questions for a test using the LLM RAG pipeline.
+        Creates fresh questions from the subject's uploaded documents,
+        saves them to the question bank, and links them to the test.
+        Questions follow pedagogical progression: easy → medium → hard.
         """
+        from app.models.document import Document, DocumentChunk
+        from app.services.question_service import QuestionGenerationService
+        from app.services.embedding_service import EmbeddingService
+        from app.services.llm_service import LLMService
+        from app.services.redis_service import RedisService
+        from app.services.document_service import DocumentService
+        from app.services.reranker_service import RerankerService
+        from app.core.config import settings
+
         test = await self.get_test(test_id, teacher_id)
         if not test:
             raise ValueError("Test not found")
@@ -155,134 +166,289 @@ class TestService:
         )
         for tq in existing.scalars().all():
             await self.db.delete(tq)
+        await self.db.flush()
 
-        selected_questions = []
+        # Find completed documents for this subject
+        doc_result = await self.db.execute(
+            select(Document).where(
+                and_(
+                    Document.subject_id == test.subject_id,
+                    Document.processing_status == "completed",
+                )
+            ).order_by(Document.upload_timestamp.desc())
+        )
+        documents = doc_result.scalars().all()
+        if not documents:
+            raise ValueError(
+                "No processed documents found for this subject. "
+                "Please upload and process documents first."
+            )
+
+        primary_doc = documents[0]
+        logger.info(
+            f"Generating test questions for test {test_id} using document "
+            f"'{primary_doc.filename}' (subject={test.subject_id})"
+        )
+
+        # Get document chunks
+        chunk_result = await self.db.execute(
+            select(DocumentChunk)
+            .where(DocumentChunk.document_id == primary_doc.id)
+            .order_by(DocumentChunk.chunk_index)
+        )
+        chunks = chunk_result.scalars().all()
+        if not chunks:
+            raise ValueError("Document has no content chunks. Please re-upload.")
+
+        # Initialize the question generation service
+        embedding_service = EmbeddingService()
+        llm_service = LLMService()
+        redis_service = RedisService()
+        document_service = DocumentService(self.db, embedding_service)
+
+        reranker_service = None
+        if settings.RERANKER_ENABLED:
+            reranker_service = RerankerService()
+
+        qgen_service = QuestionGenerationService(
+            db=self.db,
+            embedding_service=embedding_service,
+            llm_service=llm_service,
+            redis_service=redis_service,
+            document_service=document_service,
+            reranker_service=reranker_service,
+        )
+
+        # Build difficulty pool or plan based on config
         difficulty_config = test.difficulty_config or {}
+        difficulty_pool = []
+        for level in ["easy", "medium", "hard"]:
+            cfg = difficulty_config.get(level)
+            if isinstance(cfg, dict) and cfg.get("count", 0) > 0:
+                difficulty_pool.extend([level] * cfg["count"])
+        
+        if not difficulty_pool:
+            difficulty_pool = ["easy"] * 4 + ["medium"] * 3 + ["hard"] * 3
+            
+        generation_plan: List[Dict[str, Any]] = []
         topic_config = test.topic_config or []
 
-        if test.generation_type == "topic_wise" and topic_config:
-            # Topic-wise generation: select questions per topic
-            for topic_entry in topic_config:
-                topic_id = topic_entry.get("topic_id")
-                count = topic_entry.get("count", 5)
-                questions = await self._select_questions(
-                    subject_id=test.subject_id,
-                    topic_id=UUID(topic_id) if isinstance(topic_id, str) else topic_id,
-                    difficulty_config=difficulty_config,
-                    count=count,
-                )
-                selected_questions.extend(questions)
-
-        elif test.generation_type == "multi_topic" and topic_config:
-            # Multi-topic: select from multiple topics with individual configs
-            for topic_entry in topic_config:
-                topic_id = topic_entry.get("topic_id")
-                count = topic_entry.get("count", 5)
-                questions = await self._select_questions(
-                    subject_id=test.subject_id,
-                    topic_id=UUID(topic_id) if isinstance(topic_id, str) else topic_id,
-                    difficulty_config=difficulty_config,
-                    count=count,
-                )
-                selected_questions.extend(questions)
-
+        if test.generation_type in ("topic_wise", "multi_topic") and topic_config:
+            diff_idx = 0
+            for topic in topic_config:
+                t_count = topic.get("count", 5)
+                if not isinstance(t_count, int):
+                    try:
+                        t_count = int(t_count)
+                    except:
+                        t_count = 5
+                
+                t_id_str = topic.get("topic_id")
+                t_name = topic.get("topic_name", "")
+                
+                t_diff_counts = {"easy": 0, "medium": 0, "hard": 0}
+                for _ in range(t_count):
+                    diff = difficulty_pool[diff_idx % len(difficulty_pool)]
+                    t_diff_counts[diff] += 1
+                    diff_idx += 1
+                
+                for level, count in t_diff_counts.items():
+                    if count > 0:
+                        generation_plan.append({
+                            "difficulty": level,
+                            "count": count,
+                            "focus_topics": [t_name] if t_name else None,
+                            "topic_id": t_id_str
+                        })
         else:
-            # Subject-wise: select from whole subject
-            total_count = sum(
-                cfg.get("count", 0) if isinstance(cfg, dict) else 0
-                for cfg in difficulty_config.values()
-            ) if difficulty_config else 10
-            selected_questions = await self._select_questions(
-                subject_id=test.subject_id,
-                difficulty_config=difficulty_config,
-                count=total_count,
+            for level in ["easy", "medium", "hard"]:
+                cfg = difficulty_config.get(level)
+                if isinstance(cfg, dict) and cfg.get("count", 0) > 0:
+                    generation_plan.append({
+                        "difficulty": level,
+                        "count": cfg["count"],
+                        "focus_topics": cfg.get("lo_mapping") or None,
+                        "topic_id": None
+                    })
+            if not generation_plan:
+                generation_plan = [
+                    {"difficulty": "easy", "count": 4, "focus_topics": None, "topic_id": None},
+                    {"difficulty": "medium", "count": 3, "focus_topics": None, "topic_id": None},
+                    {"difficulty": "hard", "count": 3, "focus_topics": None, "topic_id": None},
+                ]
+
+        # Build blacklist from existing questions for this subject (deduplication)
+        blacklist_result = await self.db.execute(
+            select(Question).where(
+                and_(
+                    Question.subject_id == test.subject_id,
+                    Question.is_archived == False,
+                )
+            )
+        )
+        existing_questions = blacklist_result.scalars().all()
+        blacklist_embeddings = []
+        for q in existing_questions:
+            if q.question_embedding is not None and len(q.question_embedding) > 0:
+                blacklist_embeddings.append(q.question_embedding)
+
+        # Reference book doc IDs for expanded search
+        all_doc_ids = [d.id for d in documents]
+
+        # Generate questions per difficulty level
+        generated_questions: List[Question] = []
+        total_marks = 0
+        order_index = 0
+
+        # Create a proper GenerationSession so questions appear in History
+        total_requested = sum(p["count"] for p in generation_plan)
+        session = GenerationSession(
+            user_id=teacher_id,
+            document_id=primary_doc.id,
+            subject_id=test.subject_id,
+            generation_method="quick",
+            requested_count=total_requested,
+            requested_types=["mcq"],
+            status="in_progress",
+            generation_config={"test_id": str(test_id), "test_title": test.title},
+        )
+        self.db.add(session)
+        await self.db.flush()
+        session_id = session.id
+
+        questions_failed = 0
+
+        for plan in generation_plan:
+            difficulty = plan["difficulty"]
+            count = plan["count"]
+            marks_per_q = self._get_marks_for_difficulty(difficulty)
+            focus = plan.get("focus_topics")
+            topic_id_str = plan.get("topic_id")
+
+            logger.info(
+                f"Generating {count} {difficulty} questions for test {test_id}"
             )
 
-        # Create TestQuestion entries
-        total_marks = 0
-        for idx, q in enumerate(selected_questions):
-            marks = self._get_marks_for_difficulty(q.difficulty_level)
-            tq = TestQuestion(
-                test_id=test_id,
-                question_id=q.id,
-                order_index=idx,
-                marks=marks,
+            generated_for_plan = 0
+            max_retries_per_q = 10  # retry up to 10 times per question slot
+            attempts = 0
+            max_total_attempts = count * (max_retries_per_q + 2)  # hard ceiling
+
+            while generated_for_plan < count and attempts < max_total_attempts:
+                attempts += 1
+                try:
+                    # Select relevant chunks
+                    focus_topics_for_chunk = focus
+                    selected_chunks = await qgen_service._select_chunks(
+                        chunks=chunks,
+                        focus_topics=focus_topics_for_chunk,
+                        blacklist_chunks=set(),
+                        num_chunks=3,
+                        document_id=primary_doc.id,
+                        document_ids=all_doc_ids,
+                    )
+
+                    # Generate a single MCQ question
+                    question_data = await qgen_service._generate_single_question(
+                        chunks=selected_chunks,
+                        question_type="mcq",
+                        difficulty=difficulty,
+                        marks=marks_per_q,
+                        bloom_levels=None,
+                    )
+
+                    if not question_data:
+                        logger.warning(f"LLM returned no data for question attempt {attempts} ({difficulty})")
+                        continue
+
+                    # Check for duplicates against existing + newly generated
+                    # Threshold of 0.92 avoids false positives on semantically-similar-but-distinct questions
+                    is_duplicate = await qgen_service._check_duplicate(
+                        question_text=question_data["question_text"],
+                        blacklist_embeddings=blacklist_embeddings,
+                        threshold=0.92,
+                    )
+                    if is_duplicate:
+                        logger.info(f"Duplicate detected ({difficulty} attempt {attempts}), retrying...")
+                        continue
+
+                    # Save question to the question bank
+                    question_obj, _ = await qgen_service._save_question(
+                        document_id=primary_doc.id,
+                        session_id=session_id,
+                        question_data=question_data,
+                        question_type="mcq",
+                        marks=marks_per_q,
+                        difficulty=difficulty,
+                        chunk_ids=[c.id for c in selected_chunks],
+                        chunks=selected_chunks,
+                        subject_id=test.subject_id,
+                        topic_id=uuid.UUID(topic_id_str) if topic_id_str else None,
+                    )
+
+                    # Add to blacklist for future dedup within this batch
+                    if question_obj.question_embedding is not None:
+                        blacklist_embeddings.append(question_obj.question_embedding)
+
+                    # Link to test
+                    tq = TestQuestion(
+                        test_id=test_id,
+                        question_id=question_obj.id,
+                        order_index=order_index,
+                        marks=marks_per_q,
+                    )
+                    self.db.add(tq)
+                    total_marks += marks_per_q
+                    order_index += 1
+                    generated_for_plan += 1
+                    generated_questions.append(question_obj)
+
+                    logger.info(
+                        f"Generated {difficulty} question {generated_for_plan}/{count} for test {test_id}"
+                    )
+
+                except Exception as e:
+                    logger.error(
+                        f"Failed to generate {difficulty} question (attempt {attempts}): {e}"
+                    )
+                    questions_failed += 1
+                    continue
+
+            if generated_for_plan < count:
+                logger.warning(
+                    f"Could only generate {generated_for_plan}/{count} {difficulty} "
+                    f"questions after {attempts} attempts for test {test_id}"
+                )
+
+        if not generated_questions:
+            raise ValueError(
+                "Failed to generate any questions. Please check that the subject "
+                "has uploaded documents with sufficient content."
             )
-            self.db.add(tq)
-            total_marks += marks
 
         # Update test totals
-        test.total_questions = len(selected_questions)
+        test.total_questions = len(generated_questions)
         test.total_marks = total_marks
+
+        # Update the generation session
+        session.status = "completed"
+        session.questions_generated = len(generated_questions)
+        session.questions_failed = questions_failed
+        session.completed_at = datetime.now(timezone.utc)
 
         await self.db.commit()
         await self.db.refresh(test)
 
+        logger.info(
+            f"✅ Test {test_id}: generated {len(generated_questions)} questions "
+            f"({total_marks} marks) via LLM"
+        )
+
         return {
             "test_id": test.id,
-            "questions_added": len(selected_questions),
+            "questions_added": len(generated_questions),
             "total_marks": total_marks,
         }
-
-    async def _select_questions(
-        self,
-        subject_id: UUID,
-        topic_id: Optional[UUID] = None,
-        difficulty_config: Optional[dict] = None,
-        count: int = 10,
-    ) -> List[Question]:
-        """Select approved questions from the pool based on criteria."""
-        all_questions = []
-
-        if difficulty_config:
-            for difficulty, config in difficulty_config.items():
-                if not isinstance(config, dict):
-                    continue
-                diff_count = config.get("count", 0)
-                if diff_count <= 0:
-                    continue
-
-                query = (
-                    select(Question)
-                    .where(
-                        and_(
-                            Question.subject_id == subject_id,
-                            Question.vetting_status == "approved",
-                            Question.is_archived == False,
-                            Question.difficulty_level == difficulty,
-                        )
-                    )
-                )
-                if topic_id:
-                    query = query.where(Question.topic_id == topic_id)
-                
-                # Filter by LO mapping if specified
-                lo_mapping = config.get("lo_mapping", [])
-                if lo_mapping:
-                    query = query.where(Question.learning_outcome_id.in_(lo_mapping))
-
-                query = query.order_by(func.random()).limit(diff_count)
-                result = await self.db.execute(query)
-                all_questions.extend(result.scalars().all())
-        else:
-            # No difficulty config, just select randomly
-            query = (
-                select(Question)
-                .where(
-                    and_(
-                        Question.subject_id == subject_id,
-                        Question.vetting_status == "approved",
-                        Question.is_archived == False,
-                    )
-                )
-            )
-            if topic_id:
-                query = query.where(Question.topic_id == topic_id)
-            query = query.order_by(func.random()).limit(count)
-            result = await self.db.execute(query)
-            all_questions.extend(result.scalars().all())
-
-        return all_questions
 
     def _get_marks_for_difficulty(self, difficulty: Optional[str]) -> int:
         """Assign default marks based on difficulty."""
@@ -303,6 +469,16 @@ class TestService:
         test.status = "published"
         test.published_at = datetime.now(timezone.utc)
         test.unpublished_at = None
+
+        # Auto-publish the subject so students can discover it
+        subject_result = await self.db.execute(
+            select(Subject).where(Subject.id == test.subject_id)
+        )
+        subject = subject_result.scalar_one_or_none()
+        if subject and not subject.published:
+            subject.published = True
+            logger.info(f"Auto-published subject {subject.id} ({subject.name})")
+
         await self.db.commit()
         await self.db.refresh(test)
         return test
@@ -360,6 +536,13 @@ class TestService:
                 "learning_outcome_id": q.learning_outcome_id,
             })
         return questions
+
+    async def get_submissions_count(self, test_id: UUID) -> int:
+        """Get total submissions count for a test."""
+        result = await self.db.execute(
+            select(func.count(TestSubmission.id)).where(TestSubmission.test_id == test_id)
+        )
+        return result.scalar() or 0
 
     async def update_test_question(
         self, test_id: UUID, test_question_id: UUID, teacher_id: UUID, data: dict
@@ -475,11 +658,13 @@ class TestService:
 
     async def get_test_for_student(self, test_id: UUID, student_id: UUID) -> Optional[dict]:
         """Get test details and questions for a student to take."""
+        import random
+        
         test = await self.get_test(test_id)
         if not test or test.status != "published":
             return None
 
-        # Check if already submitted
+        # Check previous submissions (for info, but allow re-attempts)
         result = await self.db.execute(
             select(TestSubmission).where(
                 and_(
@@ -487,10 +672,9 @@ class TestService:
                     TestSubmission.student_id == student_id,
                     TestSubmission.status == "submitted",
                 )
-            )
+            ).order_by(TestSubmission.submitted_at.desc())
         )
-        if result.scalar_one_or_none():
-            return {"already_submitted": True, "test_id": test_id}
+        previous_submission = result.scalar_one_or_none()
 
         # Get questions (without correct answers)
         questions = await self.get_test_questions(test_id)
@@ -498,6 +682,12 @@ class TestService:
             q.pop("correct_answer", None)
             q.pop("correct_answer_override", None)
             q.pop("explanation", None)
+            # Shuffle options if present
+            if q.get("options"):
+                random.shuffle(q["options"])
+        
+        # Shuffle questions order
+        random.shuffle(questions)
 
         return {
             "id": test.id,
@@ -508,6 +698,11 @@ class TestService:
             "total_marks": test.total_marks,
             "duration_minutes": test.duration_minutes,
             "questions": questions,
+            "previous_attempt": {
+                "score": previous_submission.score,
+                "total_marks": previous_submission.total_marks,
+                "submitted_at": previous_submission.submitted_at.isoformat() if previous_submission.submitted_at else None,
+            } if previous_submission else None,
         }
 
     async def submit_test(self, test_id: UUID, student_id: UUID, data: dict) -> dict:
@@ -516,18 +711,16 @@ class TestService:
         if not test or test.status != "published":
             raise ValueError("Test not available")
 
-        # Check if already submitted
+        # Check for existing submission (for re-attempts, we update it)
         result = await self.db.execute(
             select(TestSubmission).where(
                 and_(
                     TestSubmission.test_id == test_id,
                     TestSubmission.student_id == student_id,
-                    TestSubmission.status == "submitted",
                 )
             )
         )
-        if result.scalar_one_or_none():
-            raise ValueError("Already submitted this test")
+        existing_submission = result.scalar_one_or_none()
 
         # Get questions with answers
         questions = await self.get_test_questions(test_id)
@@ -562,20 +755,64 @@ class TestService:
 
         percentage = round((score / total_marks * 100), 1) if total_marks > 0 else 0.0
 
-        submission = TestSubmission(
-            test_id=test_id,
-            student_id=student_id,
-            score=score,
-            total_marks=total_marks,
-            percentage=percentage,
-            answers=answer_results,
-            time_taken_seconds=data.get("total_time_seconds"),
-            status="submitted",
-            submitted_at=datetime.now(timezone.utc),
-        )
-        self.db.add(submission)
+        if existing_submission:
+            # Update existing submission for re-attempt
+            existing_submission.score = score
+            existing_submission.total_marks = total_marks
+            existing_submission.percentage = percentage
+            existing_submission.answers = answer_results
+            existing_submission.time_taken_seconds = data.get("total_time_seconds")
+            existing_submission.status = "submitted"
+            existing_submission.submitted_at = datetime.now(timezone.utc)
+            submission = existing_submission
+        else:
+            # Create new submission
+            submission = TestSubmission(
+                test_id=test_id,
+                student_id=student_id,
+                score=score,
+                total_marks=total_marks,
+                percentage=percentage,
+                answers=answer_results,
+                time_taken_seconds=data.get("total_time_seconds"),
+                status="submitted",
+                submitted_at=datetime.now(timezone.utc),
+            )
+            self.db.add(submission)
+        
         await self.db.commit()
         await self.db.refresh(submission)
+
+        # Award XP and gamification stats
+        tutor_feedback = None
+        try:
+            from app.services.gamification_service import GamificationService
+            gamification = GamificationService(self.db)
+            # Build question_details for AI tutor feedback
+            question_details = [
+                {
+                    "question_text": question_map.get(r["question_id"], {}).get("question_text", ""),
+                    "options": question_map.get(r["question_id"], {}).get("options", []),
+                    "selected_answer": r["selected_answer"],
+                    "correct_answer": r["correct_answer"],
+                    "is_correct": r["is_correct"],
+                }
+                for r in answer_results
+            ]
+            gamification_result = await gamification.process_test_submission(
+                student_id=student_id,
+                subject_id=test.subject_id,
+                title=test.title,
+                correct_count=sum(1 for r in answer_results if r["is_correct"]),
+                total_marks=total_marks,
+                total_questions=len(questions),
+                total_time_seconds=data.get("total_time_seconds", 0),
+                results=answer_results,
+                question_details=question_details,
+            )
+            tutor_feedback = gamification_result.get("tutor_feedback")
+        except Exception as e:
+            logger.error(f"Failed to record gamification for test: {e}")
 
         return {
             "id": submission.id,
@@ -589,14 +826,22 @@ class TestService:
             "started_at": submission.started_at,
             "submitted_at": submission.submitted_at,
             "results": answer_results,
+            "tutor_feedback": tutor_feedback,
         }
 
     def _check_answer(self, selected: str, correct: str) -> bool:
         """Check if selected answer matches correct answer."""
         if not selected or not correct:
             return False
-        # Normalize: strip whitespace, compare case-insensitively
-        return selected.strip().upper() == correct.strip().upper()
+        # Compare just the first character (the option letter) to handle format variations
+        s = selected.strip().upper()
+        c = correct.strip().upper()
+        if s == c:
+            return True
+        # First-character comparison (e.g. "A" vs "A) Option text")
+        if s and c and s[0] == c[0] and s[0] in 'ABCDEFGHIJ':
+            return True
+        return False
 
     # ========================
     # Performance Analytics

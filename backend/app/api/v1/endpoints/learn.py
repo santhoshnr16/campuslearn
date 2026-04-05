@@ -2,14 +2,18 @@
 Learning & Gamification API endpoints for students.
 """
 
-from typing import Optional
+from typing import Optional, List
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.api.v1.deps import get_current_active_user
 from app.models.user import User
+from app.models.subject import Topic
+from app.models.gamification import Enrollment
+from app.models.document import Document
 from app.services.gamification_service import GamificationService
 from app.schemas.gamification import (
     EnrollmentCreate,
@@ -40,7 +44,102 @@ async def list_available_subjects(
     return await service.get_available_subjects(current_user.id)
 
 
-# --- Enrollment ---
+@router.get("/topics/{subject_id}")
+async def list_student_topics(
+    subject_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """List topics for a subject that the student is enrolled in.
+    Returns topic names, IDs, syllabus content, and question counts.
+    """
+    # Verify enrollment
+    enrollment = await db.execute(
+        select(Enrollment).where(
+            Enrollment.student_id == current_user.id,
+            Enrollment.subject_id == subject_id,
+            Enrollment.status == "approved",
+        )
+    )
+    if not enrollment.scalar_one_or_none():
+        raise HTTPException(status_code=403, detail="Not enrolled in this subject")
+
+    # Get topics
+    result = await db.execute(
+        select(Topic)
+        .where(Topic.subject_id == subject_id)
+        .order_by(Topic.order_index)
+    )
+    topics = result.scalars().all()
+
+    return {
+        "topics": [
+            {
+                "id": str(t.id),
+                "name": t.name,
+                "description": t.description,
+                "order_index": t.order_index,
+                "has_syllabus": t.has_syllabus,
+                "syllabus_content": t.syllabus_content if t.has_syllabus else None,
+                "total_questions": t.total_questions,
+            }
+            for t in topics
+        ]
+    }
+
+
+@router.get("/references/{subject_id}")
+async def list_student_references(
+    subject_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """List reference documents shared by the teacher for an enrolled subject.
+    Only returns documents where is_public=True.
+    """
+    # Verify enrollment
+    enrollment = await db.execute(
+        select(Enrollment).where(
+            Enrollment.student_id == current_user.id,
+            Enrollment.subject_id == subject_id,
+            Enrollment.status == "approved",
+        )
+    )
+    if not enrollment.scalar_one_or_none():
+        raise HTTPException(status_code=403, detail="Not enrolled in this subject")
+
+    # Get public reference documents for this subject
+    result = await db.execute(
+        select(Document).where(
+            Document.subject_id == subject_id,
+            Document.is_public == True,
+            Document.index_type.in_(["reference_book", "template_paper"]),
+            Document.processing_status == "completed",
+        ).order_by(Document.upload_timestamp.desc())
+    )
+    docs = result.scalars().all()
+
+    doc_responses = [
+        {
+            "id": str(doc.id),
+            "filename": doc.filename,
+            "file_size_bytes": doc.file_size_bytes,
+            "mime_type": doc.mime_type,
+            "index_type": doc.index_type,
+            "subject_id": str(doc.subject_id) if doc.subject_id else None,
+            "processing_status": doc.processing_status,
+            "upload_timestamp": doc.upload_timestamp.isoformat() if doc.upload_timestamp else None,
+        }
+        for doc in docs
+    ]
+
+    return {
+        "reference_books": [d for d in doc_responses if d["index_type"] == "reference_book"],
+        "template_papers": [d for d in doc_responses if d["index_type"] == "template_paper"],
+        "reference_questions": [],
+    }
+
+
 
 @router.post("/enroll", response_model=EnrollmentResponse)
 async def enroll_in_subject(
@@ -48,13 +147,13 @@ async def enroll_in_subject(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Enroll current student in a subject."""
+    """Request enrollment in a subject (creates pending enrollment)."""
     service = GamificationService(db)
     try:
         enrollment = await service.enroll_student(current_user.id, data.subject_id)
-        # Fetch subject info for response
-        enrollments = await service.get_enrollments(current_user.id)
-        for e in enrollments:
+        # Get subject info for response
+        all_enrollments = await service.get_all_enrollments(current_user.id)
+        for e in all_enrollments:
             if e["id"] == enrollment.id:
                 return e
         return enrollment
@@ -67,9 +166,19 @@ async def list_enrollments(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """List current student's enrollments."""
+    """List current student's approved enrollments."""
     service = GamificationService(db)
     return await service.get_enrollments(current_user.id)
+
+
+@router.get("/enrollments/all", response_model=list[EnrollmentResponse])
+async def list_all_enrollments(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    """List all enrollments (including pending/rejected)."""
+    service = GamificationService(db)
+    return await service.get_all_enrollments(current_user.id)
 
 
 # --- Lessons ---
@@ -140,12 +249,13 @@ async def get_gamification_profile(
 @router.get("/leaderboard", response_model=LeaderboardResponse)
 async def get_leaderboard(
     limit: int = Query(20, ge=1, le=100),
+    subject_id: Optional[UUID] = Query(None, description="Filter leaderboard to students enrolled in this subject"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Get XP leaderboard."""
+    """Get XP leaderboard. Optionally filter by subject for class-wise ranking."""
     service = GamificationService(db)
-    return await service.get_leaderboard(current_user.id, limit)
+    return await service.get_leaderboard(current_user.id, limit, subject_id)
 
 
 # --- Test History ---

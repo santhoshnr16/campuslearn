@@ -75,6 +75,12 @@ export default function HomeStackLayout() {
           headerBackTitle: 'Back',
         }}
       />
+      <Stack.Screen
+        name="enrollments"
+        options={{
+          title: 'Enrollments',
+        }}
+      />
     </Stack>
   );
 }

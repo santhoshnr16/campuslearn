@@ -14,6 +14,7 @@ export interface SubjectStudent {
   total_topics: number;
   total_questions: number;
   is_enrolled: boolean;
+  enrollment_status?: string; // pending, approved, rejected, or null
   mastery: number;
   xp_earned: number;
 }
@@ -24,6 +25,7 @@ export interface Enrollment {
   subject_id: string;
   enrolled_at: string;
   is_active: boolean;
+  status: string;
   subject_name?: string;
   subject_code?: string;
 }
@@ -78,6 +80,7 @@ export interface LessonResult {
   new_level: number;
   results: AnswerResult[];
   accuracy: number;
+  tutor_feedback?: string;
 }
 
 export interface StudentProgress {
@@ -169,6 +172,18 @@ const learnService = {
     return data;
   },
 
+  // Topics for enrolled subjects (student-accessible)
+  async getTopics(subjectId: string): Promise<{ topics: { id: string; name: string; description?: string; order_index: number; has_syllabus: boolean; syllabus_content?: string; total_questions: number }[] }> {
+    const { data } = await api.get(`/learn/topics/${subjectId}`);
+    return data;
+  },
+
+  // Student-accessible reference materials (only is_public=true docs)
+  async getStudentReferences(subjectId: string): Promise<{ reference_books: any[]; template_papers: any[]; reference_questions: any[] }> {
+    const { data } = await api.get(`/learn/references/${subjectId}`);
+    return data;
+  },
+
   // Enrollment
   async enrollInSubject(subjectId: string): Promise<Enrollment> {
     const { data } = await api.post('/learn/enroll', { subject_id: subjectId });
@@ -177,6 +192,11 @@ const learnService = {
 
   async getEnrollments(): Promise<Enrollment[]> {
     const { data } = await api.get('/learn/enrollments');
+    return data;
+  },
+
+  async getAllEnrollments(): Promise<Enrollment[]> {
+    const { data } = await api.get('/learn/enrollments/all');
     return data;
   },
 
@@ -211,8 +231,10 @@ const learnService = {
   },
 
   // Leaderboard
-  async getLeaderboard(limit: number = 20): Promise<LeaderboardData> {
-    const { data } = await api.get('/learn/leaderboard', { params: { limit } });
+  async getLeaderboard(limit: number = 20, subjectId?: string): Promise<LeaderboardData> {
+    const params: Record<string, string | number> = { limit };
+    if (subjectId) params.subject_id = subjectId;
+    const { data } = await api.get('/learn/leaderboard', { params });
     return data;
   },
 

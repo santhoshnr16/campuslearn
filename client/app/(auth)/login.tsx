@@ -38,8 +38,8 @@ export default function LoginScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.header}>
-          <Text style={[styles.title, { color: colors.primary }]}>QuestionGen AI</Text>
-          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>Educator&apos;s Question Generation Tool</Text>
+          <Text style={[styles.title, { color: colors.primary }]}>Campus Learn</Text>
+          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>Smart Learning, Better Results</Text>
         </View>
 
         <GlassCard style={styles.form}>

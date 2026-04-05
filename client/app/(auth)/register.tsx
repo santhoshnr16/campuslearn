@@ -63,7 +63,7 @@ export default function RegisterScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.header}>
-          <Text style={[styles.title, { color: colors.primary }]}>QuestionGen AI</Text>
+          <Text style={[styles.title, { color: colors.primary }]}>Campus Learn</Text>
           <Text style={[styles.subtitle, { color: colors.textSecondary }]}>Create Your Account</Text>
         </View>
 

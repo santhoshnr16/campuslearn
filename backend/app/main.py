@@ -17,6 +17,7 @@ from app.core.logging import setup_logging, logger, request_id_ctx
 from app.api.v1 import api_router
 from app.services.embedding_service import warmup_embedding_service
 from app.services.reranker_service import warmup_reranker_service
+from app.services.event_broadcaster import broadcaster
 
 
 @asynccontextmanager
@@ -70,11 +71,19 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"⚠️ Failed to clean stale locks: {e}")
     
+    # Start the real-time event broadcaster (PG LISTEN/NOTIFY → SSE)
+    try:
+        await broadcaster.start()
+        logger.info("✅ EventBroadcaster started (LISTEN table_changes)")
+    except Exception as e:
+        logger.warning(f"⚠️ EventBroadcaster failed to start: {e}")
+
     logger.info("✅ All services ready")
     yield
     
     # Shutdown
     logger.info("👋 Shutting down...")
+    await broadcaster.stop()
 
 
 app = FastAPI(

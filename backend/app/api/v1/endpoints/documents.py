@@ -486,6 +486,7 @@ async def list_reference_documents(
             "total_chunks": doc.total_chunks,
             "upload_timestamp": doc.upload_timestamp.isoformat() if doc.upload_timestamp else None,
             "processed_at": doc.processed_at.isoformat() if doc.processed_at else None,
+            "is_public": doc.is_public,
             "parsed_question_count": (doc.document_metadata or {}).get("total_parsed", 0) if doc.index_type == "reference_questions" else None,
         }
         for doc in documents
@@ -499,5 +500,47 @@ async def list_reference_documents(
         "reference_books": reference_books,
         "template_papers": template_papers,
         "reference_questions": reference_questions,
+    }
+
+
+@router.patch("/{document_id}/toggle-visibility")
+async def toggle_document_visibility(
+    document_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Toggle the student visibility (is_public) of a reference document.
+    Only the document owner can toggle this.
+    """
+    from sqlalchemy import update, select
+    from app.models.document import Document
+    
+    # Verify ownership
+    result = await db.execute(
+        select(Document).where(
+            Document.id == document_id,
+            Document.user_id == current_user.id,
+        )
+    )
+    doc = result.scalar_one_or_none()
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found",
+        )
+    
+    new_value = not doc.is_public
+    await db.execute(
+        update(Document)
+        .where(Document.id == document_id)
+        .values(is_public=new_value)
+    )
+    await db.commit()
+    
+    return {
+        "document_id": str(document_id),
+        "is_public": new_value,
+        "message": f"Document {'shared with students' if new_value else 'hidden from students'}",
     }
 

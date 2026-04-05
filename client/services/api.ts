@@ -4,6 +4,7 @@
 
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
 import * as SecureStore from 'expo-secure-store';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import { ENV_CONFIG, isSimulator } from '../config/env';
 
@@ -104,28 +105,57 @@ apiClient.interceptors.response.use(
 export const tokenStorage = {
   async getAccessToken(): Promise<string | null> {
     try {
-      return await SecureStore.getItemAsync(ACCESS_TOKEN_KEY);
-    } catch {
+      // Try SecureStore first (native)
+      if (Platform.OS !== 'web' && SecureStore.getItemAsync) {
+        return await SecureStore.getItemAsync(ACCESS_TOKEN_KEY);
+      }
+      // Fallback to AsyncStorage (web/simulator)
+      return await AsyncStorage.getItem(ACCESS_TOKEN_KEY);
+    } catch (error) {
+      console.warn('[TokenStorage] Failed to get access token:', error);
       return null;
     }
   },
 
   async getRefreshToken(): Promise<string | null> {
     try {
-      return await SecureStore.getItemAsync(REFRESH_TOKEN_KEY);
-    } catch {
+      if (Platform.OS !== 'web' && SecureStore.getItemAsync) {
+        return await SecureStore.getItemAsync(REFRESH_TOKEN_KEY);
+      }
+      return await AsyncStorage.getItem(REFRESH_TOKEN_KEY);
+    } catch (error) {
+      console.warn('[TokenStorage] Failed to get refresh token:', error);
       return null;
     }
   },
 
   async setTokens(accessToken: string, refreshToken: string): Promise<void> {
-    await SecureStore.setItemAsync(ACCESS_TOKEN_KEY, accessToken);
-    await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, refreshToken);
+    try {
+      if (Platform.OS !== 'web' && SecureStore.setItemAsync) {
+        await SecureStore.setItemAsync(ACCESS_TOKEN_KEY, accessToken);
+        await SecureStore.setItemAsync(REFRESH_TOKEN_KEY, refreshToken);
+      } else {
+        await AsyncStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
+        await AsyncStorage.setItem(REFRESH_TOKEN_KEY, refreshToken);
+      }
+    } catch (error) {
+      console.error('[TokenStorage] Failed to set tokens:', error);
+      throw error;
+    }
   },
 
   async clearTokens(): Promise<void> {
-    await SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY);
-    await SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY);
+    try {
+      if (Platform.OS !== 'web' && SecureStore.deleteItemAsync) {
+        await SecureStore.deleteItemAsync(ACCESS_TOKEN_KEY);
+        await SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY);
+      } else {
+        await AsyncStorage.removeItem(ACCESS_TOKEN_KEY);
+        await AsyncStorage.removeItem(REFRESH_TOKEN_KEY);
+      }
+    } catch (error) {
+      console.warn('[TokenStorage] Failed to clear tokens:', error);
+    }
   },
 };
 

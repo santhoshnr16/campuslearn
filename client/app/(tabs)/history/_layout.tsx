@@ -17,11 +17,14 @@ export default function HistoryLayout() {
                 headerTintColor: colors.primary,
                 headerTitleStyle: { fontWeight: '600', color: colors.text },
                 headerShadowVisible: false,
+                headerBackTitle: 'Back',
             }}
         >
             <Stack.Screen
                 name="index"
-                options={{ title: 'Generation History' }}
+                options={{
+                    headerShown: false,
+                }}
             />
         </Stack>
     );

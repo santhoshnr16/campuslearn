@@ -9,7 +9,18 @@ export default function QuickGenerateStackLayout() {
   return (
     <Stack
       screenOptions={{
-        headerShown: false, // Quick generate has its own header styling
+        headerShown: true,
+        headerTransparent: true,
+        headerStyle: {
+          backgroundColor: 'transparent',
+        },
+        headerTintColor: colors.primary,
+        headerTitleStyle: {
+          fontWeight: '600',
+          color: colors.text,
+        },
+        headerShadowVisible: false,
+        headerBackTitle: 'Back',
         contentStyle: {
           backgroundColor: colors.background,
         },
@@ -18,7 +29,7 @@ export default function QuickGenerateStackLayout() {
       <Stack.Screen
         name="index"
         options={{
-          title: 'Quick Generate',
+          headerShown: false,
         }}
       />
     </Stack>

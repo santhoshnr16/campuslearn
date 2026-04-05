@@ -12,7 +12,7 @@ import {
   TouchableOpacity,
 } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { Colors, Spacing, FontSizes, BorderRadius } from '@/constants/theme';
 import { IconSymbol } from '@/components/ui/icon-symbol';
@@ -28,6 +28,7 @@ export default function PerformanceScreen() {
   const colorScheme = useColorScheme() ?? 'light';
   const colors = Colors[colorScheme];
   const { testId } = useLocalSearchParams<{ testId: string }>();
+  const insets = useSafeAreaInsets();
 
   const [performance, setPerformance] = useState<TestPerformanceResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -71,28 +72,28 @@ export default function PerformanceScreen() {
 
   if (isLoading) {
     return (
-      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['bottom']}>
+      <View style={[styles.container, { backgroundColor: colors.background }]}>
         <View style={styles.centered}>
           <ActivityIndicator size="large" color={colors.primary} />
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
   if (!performance) {
     return (
-      <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['bottom']}>
+      <View style={[styles.container, { backgroundColor: colors.background }]}>
         <View style={styles.centered}>
           <Text style={{ color: colors.error }}>Failed to load performance data</Text>
         </View>
-      </SafeAreaView>
+      </View>
     );
   }
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['bottom']}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       <ScrollView
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, { paddingTop: 110 }]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
       >
         {/* Test title */}
@@ -354,7 +355,7 @@ export default function PerformanceScreen() {
           </View>
         )}
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -429,12 +430,14 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.md,
     borderRadius: BorderRadius.md,
     overflow: 'hidden',
+    gap: Spacing.xs,
   },
   toggleBtn: {
     flex: 1,
     paddingVertical: 10,
     alignItems: 'center',
     borderWidth: 1,
+    borderRadius: BorderRadius.md,
   },
   toggleText: {
     fontSize: FontSizes.sm,

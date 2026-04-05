@@ -18,7 +18,7 @@
 services:
   db:
     image: pgvector/pgvector:pg16
-    container_name: qgen_db
+    container_name: campuslearn_db
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-qgen_user}
@@ -26,18 +26,14 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-qgen_db}
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - campuslearn_postgres_data:/var/lib/postgresql/data
       - ./backend/init_db.sql:/docker-entrypoint-initdb.d/init.sql:ro
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     networks:
-      - qgen_net
+      - campuslearn_net
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "pg_isready -U ${POSTGRES_USER:-qgen_user} -d ${POSTGRES_DB:-qgen_db}",
-        ]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-qgen_user} -d ${POSTGRES_DB:-qgen_db}" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -50,22 +46,18 @@ services:
           memory: 512M
   redis:
     image: redis:7-alpine
-    container_name: qgen_redis
+    container_name: campuslearn_redis
     restart: unless-stopped
     command: >
-      redis-server
-      --appendonly yes
-      --maxmemory 512mb
-      --maxmemory-policy allkeys-lru
-      --save 60 1000
+      redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru --save 60 1000
     volumes:
-      - redis_data:/data
+      - campuslearn_redis_data:/data
     ports:
       - "${REDIS_PORT:-6379}:6379"
     networks:
-      - qgen_net
+      - campuslearn_net
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -81,14 +73,14 @@ services:
   # NOTE: For GPU acceleration, local installation is recommended
   # ollama:
   #   image: ollama/ollama:latest
-  #   container_name: qgen_ollama
+  #   container_name: campuslearn_ollama
   #   restart: unless-stopped
   #   volumes:
   #     - ollama_data:/root/.ollama
   #   ports:
   #     - "11434:11434"
   #   networks:
-  #     - qgen_net
+  #     - campuslearn_net
   #   # For NVIDIA GPU support, uncomment:
   #   # deploy:
   #   #   resources:
@@ -103,23 +95,19 @@ services:
       dockerfile: Dockerfile
       args:
         - PYTHON_VERSION=3.11
-    container_name: qgen_api
+    container_name: campuslearn_api
     restart: unless-stopped
     # Load environment variables from .env file
     env_file: .env
     command: >
-      uvicorn app.main:app
-      --host 0.0.0.0
-      --port 8000
-      --reload
-      --log-level ${LOG_LEVEL:-info}
+      uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --log-level ${LOG_LEVEL:-info}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./backend:/app
-      - upload_data:/app/uploads
+      - campuslearn_upload_data:/app/uploads
       # Cache for ML models (sentence-transformers, cross-encoder)
-      - model_cache:/root/.cache
+      - campuslearn_model_cache:/root/.cache
     environment:
       # Database
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-qgen_user}:${POSTGRES_PASSWORD:-qgen_password}@db:5432/${POSTGRES_DB:-qgen_db}
@@ -163,7 +151,6 @@ services:
       - RERANKER_ENABLED=${RERANKER_ENABLED:-true}
 
       # Question Generation
-      - MAX_QUESTIONS_PER_REQUEST=${MAX_QUESTIONS_PER_REQUEST:-50}
       - CHUNK_SIZE=${CHUNK_SIZE:-1000}
       - CHUNK_OVERLAP=${CHUNK_OVERLAP:-200}
 
@@ -186,7 +173,7 @@ services:
       redis:
         condition: service_healthy
     networks:
-      - qgen_net
+      - campuslearn_net
     deploy:
       resources:
         limits:
@@ -195,23 +182,22 @@ services:
           memory: 1G
 
 volumes:
-  postgres_data:
-    name: qgen_postgres_data
+  campuslearn_postgres_data:
+    name: campuslearn_postgres_data
 
-  redis_data:
-    name: qgen_redis_data
+  campuslearn_redis_data:
+    name: campuslearn_redis_data
 
-  upload_data:
-    name: qgen_upload_data
+  campuslearn_upload_data:
+    name: campuslearn_upload_data
 
-  model_cache:
-    name: qgen_model_cache
-
+  campuslearn_model_cache:
+    name: campuslearn_model_cache
   # Uncomment if using Docker Ollama
   # ollama_data:
   #   name: qgen_ollama_data
 
 networks:
-  qgen_net:
-    name: qgen_network
+  campuslearn_net:
+    name: campuslearn_network
     driver: bridge

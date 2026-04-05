@@ -1,8 +1,8 @@
 import { SymbolView, SymbolViewProps, SymbolWeight } from 'expo-symbols';
 import { StyleProp, ViewStyle } from 'react-native';
-import Animated, { 
-  useAnimatedStyle, 
-  useSharedValue, 
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
   withSpring,
   withSequence,
   withTiming,
@@ -82,7 +82,7 @@ export function IconSymbol({
         // iOS 26 symbol effects
         animationSpec={animationEffect ? {
           effect: {
-            type: animationEffect,
+            type: animationEffect as any,
           },
         } : undefined}
       />

@@ -22,6 +22,9 @@ import {
   Subject,
   Topic,
   TopicCreateData,
+  PendingEnrollment,
+  generateLearningContent,
+  generateTopicContent,
 } from '@/services/subjects';
 import { referencesService, ReferenceDocument } from '@/services/references';
 import { ReferenceMaterials } from '@/components/reference-materials';
@@ -55,9 +58,25 @@ export default function SubjectDetailScreen() {
   // New state for syllabus chapter extraction
   const [isExtractingChapters, setIsExtractingChapters] = useState(false);
   const [extractionStatus, setExtractionStatus] = useState('');
+  const [isGeneratingContent, setIsGeneratingContent] = useState(false);
+  const [generationStatus, setGenerationStatus] = useState('');
+  const [generatingContentTopicId, setGeneratingContentTopicId] = useState<string | null>(null);
+
+  // Subject edit modal state
+  const [showEditSubjectModal, setShowEditSubjectModal] = useState(false);
+  const [editSubjectName, setEditSubjectName] = useState('');
+  const [editSubjectCode, setEditSubjectCode] = useState('');
+  const [editSubjectDescription, setEditSubjectDescription] = useState('');
+  const [isSavingSubject, setIsSavingSubject] = useState(false);
 
   // Tab state for switching between chapters, references, and history
-  const [activeTab, setActiveTab] = useState<'chapters' | 'references' | 'history'>('chapters');
+  const [activeTab, setActiveTab] = useState<'chapters' | 'references' | 'history' | 'enrollments'>('chapters');
+
+  // Enrollment management state
+  const [pendingEnrollments, setPendingEnrollments] = useState<PendingEnrollment[]>([]);
+  const [approvedStudents, setApprovedStudents] = useState<PendingEnrollment[]>([]);
+  const [isLoadingEnrollments, setIsLoadingEnrollments] = useState(false);
+  const [processingEnrollmentId, setProcessingEnrollmentId] = useState<string | null>(null);
 
   // Reference materials state
   const [referenceBooks, setReferenceBooks] = useState<ReferenceDocument[]>([]);
@@ -110,6 +129,11 @@ export default function SubjectDetailScreen() {
       ]);
       setSubject(subjectData);
       setTopics(topicsData.topics);
+      // Also load enrollment requests
+      try {
+        const enrollments = await subjectsService.getEnrollmentRequests(id);
+        setPendingEnrollments(enrollments);
+      } catch { /* enrollment API may not exist yet */ }
     } catch (error) {
       console.error('Error loading subject:', error);
       showError(error, 'Failed to Load');
@@ -118,6 +142,64 @@ export default function SubjectDetailScreen() {
       setIsRefreshing(false);
     }
   }, [id]);
+
+  const loadEnrollments = useCallback(async () => {
+    if (!id) return;
+    setIsLoadingEnrollments(true);
+    try {
+      const [pending, approved] = await Promise.all([
+        subjectsService.getEnrollmentRequests(id),
+        subjectsService.getAllEnrollments('approved').then(all => all.filter(e => e.subject_id === id)).catch(() => []),
+      ]);
+      setPendingEnrollments(pending);
+      setApprovedStudents(approved);
+    } catch (error) {
+      console.error('Error loading enrollments:', error);
+    } finally {
+      setIsLoadingEnrollments(false);
+    }
+  }, [id]);
+
+  const handleApproveEnrollment = async (enrollmentId: string) => {
+    if (!id) return;
+    setProcessingEnrollmentId(enrollmentId);
+    try {
+      await subjectsService.approveEnrollment(id, enrollmentId);
+      showSuccess('Student enrollment approved');
+      await loadEnrollments();
+    } catch (error) {
+      showError(error, 'Failed to Approve');
+    } finally {
+      setProcessingEnrollmentId(null);
+    }
+  };
+
+  const handleRejectEnrollment = async (enrollmentId: string) => {
+    if (!id) return;
+    Alert.alert(
+      'Reject Enrollment',
+      'Are you sure you want to reject this enrollment request?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reject',
+          style: 'destructive',
+          onPress: async () => {
+            setProcessingEnrollmentId(enrollmentId);
+            try {
+              await subjectsService.rejectEnrollment(id, enrollmentId);
+              showSuccess('Enrollment request rejected');
+              await loadEnrollments();
+            } catch (error) {
+              showError(error, 'Failed to Reject');
+            } finally {
+              setProcessingEnrollmentId(null);
+            }
+          },
+        },
+      ]
+    );
+  };
 
   const loadReferences = useCallback(async () => {
     if (!id) return;
@@ -138,11 +220,36 @@ export default function SubjectDetailScreen() {
   useEffect(() => {
     loadData();
     loadReferences();
-  }, [loadData, loadReferences]);
+    loadEnrollments();
+  }, [loadData, loadReferences, loadEnrollments]);
 
   const handleRefresh = () => {
     setIsRefreshing(true);
     loadData();
+  };
+
+  // Edit subject
+  const handleEditSubject = async () => {
+    if (!editSubjectName.trim() || !editSubjectCode.trim()) {
+      showError('Please enter subject name and code');
+      return;
+    }
+
+    setIsSavingSubject(true);
+    try {
+      await subjectsService.updateSubject(id as string, {
+        name: editSubjectName.trim(),
+        code: editSubjectCode.trim(),
+        description: editSubjectDescription.trim(),
+      });
+      showSuccess(`Subject ${editSubjectCode} updated successfully`);
+      setShowEditSubjectModal(false);
+      loadData();
+    } catch (err: any) {
+      showError(err?.response?.data?.detail || 'Failed to update subject');
+    } finally {
+      setIsSavingSubject(false);
+    }
   };
 
   const handleCreateTopic = async () => {
@@ -574,6 +681,31 @@ export default function SubjectDetailScreen() {
     }
   };
 
+  const handleDeleteHistorySession = (session: GenerationSession) => {
+    heavyImpact();
+    Alert.alert(
+      'Delete Generation History',
+      `Delete this session with ${session.questions_generated} questions? This will also delete all the questions generated in this session.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await questionsService.deleteSession(session.id);
+              showSuccess('Generation history deleted');
+              // Refresh both history and subject data to update stats
+              await Promise.all([loadHistory(), loadData()]);
+            } catch (error) {
+              showError(error, 'Failed to delete');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   if (isLoading) {
     return (
       <View style={[styles.loadingContainer, { backgroundColor: colors.background }]}>
@@ -643,8 +775,23 @@ export default function SubjectDetailScreen() {
             style={styles.headerCard}
           >
             <View style={styles.headerContent}>
-              <Text style={styles.subjectCode}>{subject.code}</Text>
-              <Text style={styles.subjectName}>{subject.name}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                <View>
+                  <Text style={styles.subjectCode}>{subject.code}</Text>
+                  <Text style={styles.subjectName}>{subject.name}</Text>
+                </View>
+                <TouchableOpacity
+                  style={{ padding: 8, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 20 }}
+                  onPress={() => {
+                    setEditSubjectName(subject.name);
+                    setEditSubjectCode(subject.code);
+                    setEditSubjectDescription(subject.description || '');
+                    setShowEditSubjectModal(true);
+                  }}
+                >
+                  <IconSymbol name="pencil" size={20} color="#FFFFFF" />
+                </TouchableOpacity>
+              </View>
               {subject.description && (
                 <Text style={styles.subjectDescription}>{subject.description}</Text>
               )}
@@ -660,10 +807,10 @@ export default function SubjectDetailScreen() {
                 <Text style={styles.statLabel}>Questions</Text>
               </View>
               <View style={styles.statDivider} />
-              <View style={styles.statItem}>
-                <Text style={styles.statValue}>{Math.round(subject.syllabus_coverage)}%</Text>
-                <Text style={styles.statLabel}>Coverage</Text>
-              </View>
+              <TouchableOpacity style={styles.statItem} onPress={() => { setActiveTab('enrollments'); loadEnrollments(); }}>
+                <Text style={styles.statValue}>{approvedStudents.length}</Text>
+                <Text style={styles.statLabel}>Students</Text>
+              </TouchableOpacity>
             </View>
           </LinearGradient>
 
@@ -778,6 +925,31 @@ export default function SubjectDetailScreen() {
                 History
               </Text>
             </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.tabButton,
+                activeTab === 'enrollments' && { backgroundColor: colors.primary },
+              ]}
+              onPress={() => {
+                selectionImpact();
+                setActiveTab('enrollments');
+                loadEnrollments();
+              }}
+            >
+              <IconSymbol
+                name="person.badge.plus"
+                size={16}
+                color={activeTab === 'enrollments' ? '#FFFFFF' : colors.textSecondary}
+              />
+              <Text
+                style={[
+                  styles.tabButtonText,
+                  { color: activeTab === 'enrollments' ? '#FFFFFF' : colors.textSecondary },
+                ]}
+              >
+                Enroll{pendingEnrollments.length > 0 ? ` (${pendingEnrollments.length})` : ''}
+              </Text>
+            </TouchableOpacity>
           </View>
 
           {/* Chapters Section */}
@@ -809,6 +981,50 @@ export default function SubjectDetailScreen() {
                     <IconSymbol name="plus" size={16} color={colors.primary} />
                     <Text style={[styles.addButtonText, { color: colors.primary }]}>Add</Text>
                   </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.addButton, { backgroundColor: '#AF52DE' + '20' }]}
+                    onPress={async () => {
+                      mediumImpact();
+                      setIsGeneratingContent(true);
+
+                      let genCount = 0;
+                      let skipCount = 0;
+                      let errorCount = 0;
+
+                      for (let i = 0; i < topics.length; i++) {
+                        const topic = topics[i];
+                        if (topic.has_syllabus && topic.syllabus_content && topic.syllabus_content.length > 100) {
+                          skipCount++;
+                          continue;
+                        }
+
+                        setGenerationStatus(`Generating topic ${i + 1} of ${topics.length}: ${topic.name}...`);
+                        try {
+                          await generateTopicContent(id!, topic.id);
+                          genCount++;
+                        } catch (err) {
+                          console.error(`Failed to generate content for ${topic.name}:`, err);
+                          errorCount++;
+                        }
+                      }
+
+                      setGenerationStatus(`✅ Generated: ${genCount} | Skipped: ${skipCount} | Failed: ${errorCount}`);
+                      if (genCount > 0) showSuccess(`Learning content generated for ${genCount} topics`);
+                      else if (errorCount > 0) showError(`Failed to generate content for ${errorCount} topics`);
+
+                      loadData();
+                      setTimeout(() => setGenerationStatus(''), 5000);
+                      setIsGeneratingContent(false);
+                    }}
+                    disabled={isGeneratingContent || topics.length === 0}
+                  >
+                    {isGeneratingContent ? (
+                      <ActivityIndicator size="small" color="#AF52DE" />
+                    ) : (
+                      <IconSymbol name="sparkles" size={14} color="#AF52DE" />
+                    )}
+                    <Text style={[styles.addButtonText, { color: '#AF52DE' }]}>Generate</Text>
+                  </TouchableOpacity>
                 </View>
               </View>
 
@@ -822,6 +1038,21 @@ export default function SubjectDetailScreen() {
                   <Text style={[styles.extractionHint, { color: colors.textSecondary }]}>
                     AI is reading your syllabus and identifying topics...
                   </Text>
+                </View>
+              )}
+
+              {/* LLM Content Generation Progress */}
+              {(isGeneratingContent || generationStatus) && (
+                <View style={[styles.extractionProgress, { backgroundColor: colors.card, borderLeftColor: '#AF52DE', borderLeftWidth: 3 }]}>
+                  {isGeneratingContent && <ActivityIndicator size="small" color="#AF52DE" />}
+                  <Text style={[styles.extractionText, { color: colors.text }]}>
+                    {generationStatus || 'Generating learning content with AI...'}
+                  </Text>
+                  {isGeneratingContent && (
+                    <Text style={[styles.extractionHint, { color: colors.textSecondary }]}>
+                      This may take a few minutes for all topics...
+                    </Text>
+                  )}
                 </View>
               )}
 
@@ -875,15 +1106,42 @@ export default function SubjectDetailScreen() {
                         <IconSymbol name="chevron.right" size={14} color={colors.textTertiary} />
                       </TouchableOpacity>
 
-                      {/* Right side: generate button */}
-                      <TouchableOpacity
-                        style={[styles.topicGenerateButton, { backgroundColor: colors.primary + '12' }]}
-                        onPress={() => openGenerateModal(topic)}
-                        activeOpacity={0.7}
-                      >
-                        <IconSymbol name="sparkles" size={18} color={colors.primary} />
-                        <Text style={[styles.topicGenerateLabel, { color: colors.primary }]}>Generate</Text>
-                      </TouchableOpacity>
+                      {/* Right side: generate buttons */}
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                        <TouchableOpacity
+                          style={[styles.topicGenerateButton, { backgroundColor: '#AF52DE' + '12', paddingHorizontal: 8 }]}
+                          onPress={async () => {
+                            mediumImpact();
+                            setGeneratingContentTopicId(topic.id);
+                            try {
+                              await generateTopicContent(id!, topic.id);
+                              showSuccess(`Content generated for ${topic.name}`);
+                              loadData();
+                            } catch (err: any) {
+                              showError(err?.response?.data?.detail || 'Content generation failed');
+                            } finally {
+                              setGeneratingContentTopicId(null);
+                            }
+                          }}
+                          disabled={generatingContentTopicId === topic.id}
+                          activeOpacity={0.7}
+                        >
+                          {generatingContentTopicId === topic.id ? (
+                            <ActivityIndicator size="small" color="#AF52DE" />
+                          ) : (
+                            <IconSymbol name="doc.text" size={16} color="#AF52DE" />
+                          )}
+                          <Text style={[styles.topicGenerateLabel, { color: '#AF52DE', fontSize: 11 }]}>Content</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.topicGenerateButton, { backgroundColor: colors.primary + '12' }]}
+                          onPress={() => openGenerateModal(topic)}
+                          activeOpacity={0.7}
+                        >
+                          <IconSymbol name="sparkles" size={18} color={colors.primary} />
+                          <Text style={[styles.topicGenerateLabel, { color: colors.primary }]}>Generate</Text>
+                        </TouchableOpacity>
+                      </View>
                     </View>
                   ))}
                 </View>
@@ -939,17 +1197,28 @@ export default function SubjectDetailScreen() {
                       : '';
 
                     return (
-                      <TouchableOpacity
+                      <View
                         key={session.id}
-                        activeOpacity={0.7}
-                        onPress={() => openHistorySession(session)}
                         style={[styles.historyCard, { backgroundColor: colors.card, borderColor: colors.border }]}
                       >
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
                           <View style={[styles.historyBadge, { backgroundColor: mColor + '20' }]}>
                             <Text style={{ fontSize: FontSizes.xs, fontWeight: '600', color: mColor }}>{mLabel}</Text>
                           </View>
-                          <Text style={{ fontSize: FontSizes.xs, color: colors.textTertiary }}>{time}</Text>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.sm }}>
+                            <Text style={{ fontSize: FontSizes.xs, color: colors.textTertiary }}>{time}</Text>
+                            <TouchableOpacity
+                              onPress={() => handleDeleteHistorySession(session)}
+                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                              style={{
+                                padding: 4,
+                                backgroundColor: '#FF3B3015',
+                                borderRadius: BorderRadius.sm,
+                              }}
+                            >
+                              <IconSymbol name="trash" size={14} color="#FF3B30" />
+                            </TouchableOpacity>
+                          </View>
                         </View>
                         <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8, gap: 12 }}>
                           <Text style={{ fontSize: FontSizes.lg, fontWeight: '700', color: colors.primary }}>
@@ -962,9 +1231,164 @@ export default function SubjectDetailScreen() {
                             </Text>
                           ) : null}
                         </View>
-                      </TouchableOpacity>
+                      </View>
                     );
                   })}
+                </View>
+              )}
+            </View>
+          )}
+
+          {/* Enrollment Requests Section */}
+          {activeTab === 'enrollments' && (
+            <View style={styles.section}>
+              <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>
+                PENDING REQUESTS ({pendingEnrollments.length})
+              </Text>
+              {isLoadingEnrollments ? (
+                <View style={{ padding: 40, alignItems: 'center' }}>
+                  <ActivityIndicator size="large" color={colors.primary} />
+                </View>
+              ) : pendingEnrollments.length === 0 ? (
+                <View style={[styles.emptyCard, { backgroundColor: colors.card }]}>
+                  <IconSymbol name="person.badge.plus" size={48} color={colors.textTertiary} />
+                  <Text style={[styles.emptyTitle, { color: colors.text }]}>No Pending Requests</Text>
+                  <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                    Students who request enrollment in this subject will appear here.
+                  </Text>
+                </View>
+              ) : (
+                <View style={{ gap: Spacing.sm }}>
+                  {pendingEnrollments.map((enrollment) => (
+                    <View
+                      key={enrollment.id}
+                      style={[styles.historyCard, { backgroundColor: colors.card, borderColor: colors.border }]}
+                    >
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontSize: FontSizes.md, fontWeight: '600', color: colors.text }}>
+                            {enrollment.student_name || 'Unknown Student'}
+                          </Text>
+                          <Text style={{ fontSize: FontSizes.xs, color: colors.textSecondary, marginTop: 2 }}>
+                            {enrollment.student_email}
+                          </Text>
+                          <Text style={{ fontSize: FontSizes.xs, color: colors.textTertiary, marginTop: 2 }}>
+                            Requested {new Date(enrollment.enrolled_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                          </Text>
+                        </View>
+                      </View>
+                      <View style={{ flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.sm }}>
+                        <TouchableOpacity
+                          style={{
+                            flex: 1,
+                            backgroundColor: '#34C75920',
+                            paddingVertical: Spacing.sm,
+                            borderRadius: BorderRadius.md,
+                            alignItems: 'center',
+                          }}
+                          onPress={() => handleApproveEnrollment(enrollment.id)}
+                          disabled={processingEnrollmentId === enrollment.id}
+                        >
+                          {processingEnrollmentId === enrollment.id ? (
+                            <ActivityIndicator size="small" color="#34C759" />
+                          ) : (
+                            <Text style={{ color: '#34C759', fontWeight: '700', fontSize: FontSizes.sm }}>
+                              ✅ Approve
+                            </Text>
+                          )}
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={{
+                            flex: 1,
+                            backgroundColor: '#FF3B3020',
+                            paddingVertical: Spacing.sm,
+                            borderRadius: BorderRadius.md,
+                            alignItems: 'center',
+                          }}
+                          onPress={() => handleRejectEnrollment(enrollment.id)}
+                          disabled={processingEnrollmentId === enrollment.id}
+                        >
+                          <Text style={{ color: '#FF3B30', fontWeight: '700', fontSize: FontSizes.sm }}>
+                            ❌ Reject
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              {/* Approved Students */}
+              <Text style={[styles.sectionTitle, { color: colors.textSecondary, marginTop: Spacing.lg }]}>
+                ENROLLED STUDENTS ({approvedStudents.length})
+              </Text>
+              {approvedStudents.length === 0 ? (
+                <View style={[styles.emptyCard, { backgroundColor: colors.card }]}>
+                  <IconSymbol name="person.2.fill" size={40} color={colors.textTertiary} />
+                  <Text style={[styles.emptyTitle, { color: colors.text }]}>No Students Yet</Text>
+                  <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+                    Students will appear here after their enrollment is approved.
+                  </Text>
+                </View>
+              ) : (
+                <View style={{ gap: Spacing.sm }}>
+                  {approvedStudents.map((student) => (
+                    <View
+                      key={student.id}
+                      style={[styles.historyCard, { backgroundColor: colors.card, borderColor: colors.border }]}
+                    >
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontSize: FontSizes.md, fontWeight: '600', color: colors.text }}>
+                            {student.student_name || 'Unknown Student'}
+                          </Text>
+                          <Text style={{ fontSize: FontSizes.xs, color: colors.textSecondary, marginTop: 2 }}>
+                            {student.student_email}
+                          </Text>
+                        </View>
+                        <TouchableOpacity
+                          style={{
+                            backgroundColor: '#FF3B3015',
+                            paddingHorizontal: Spacing.md,
+                            paddingVertical: 6,
+                            borderRadius: BorderRadius.md,
+                            borderWidth: 1,
+                            borderColor: '#FF3B3030',
+                          }}
+                          onPress={() => {
+                            Alert.alert(
+                              'Revoke Access',
+                              `Remove ${student.student_name} from this subject?`,
+                              [
+                                { text: 'Cancel', style: 'cancel' },
+                                {
+                                  text: 'Revoke', style: 'destructive', onPress: async () => {
+                                    setProcessingEnrollmentId(student.id);
+                                    try {
+                                      await subjectsService.rejectEnrollment(id, student.id);
+                                      showSuccess('Student access revoked');
+                                      await loadEnrollments();
+                                    } catch (error) {
+                                      showError(error, 'Failed to revoke');
+                                    } finally {
+                                      setProcessingEnrollmentId(null);
+                                    }
+                                  }
+                                },
+                              ]
+                            );
+                          }}
+                          disabled={processingEnrollmentId === student.id}
+                        >
+                          {processingEnrollmentId === student.id ? (
+                            <ActivityIndicator size="small" color="#FF3B30" />
+                          ) : (
+                            <Text style={{ color: '#FF3B30', fontWeight: '600', fontSize: FontSizes.xs }}>Revoke</Text>
+                          )}
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  ))}
                 </View>
               )}
             </View>
@@ -1002,6 +1426,69 @@ export default function SubjectDetailScreen() {
             </View>
           )}
         </ScrollView>
+
+        {/* Edit Subject Modal */}
+        <Modal
+          visible={showEditSubjectModal}
+          animationType="slide"
+          presentationStyle="pageSheet"
+          onRequestClose={() => setShowEditSubjectModal(false)}
+        >
+          <View style={[styles.modalContainer, { backgroundColor: colors.background }]}>
+            <View style={[styles.modalHeader, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
+              <TouchableOpacity onPress={() => {
+                mediumImpact();
+                setShowEditSubjectModal(false);
+              }}>
+                <Text style={[styles.modalCancel, { color: colors.primary }]}>Cancel</Text>
+              </TouchableOpacity>
+              <Text style={[styles.modalTitle, { color: colors.text }]}>Edit Subject</Text>
+              <TouchableOpacity onPress={handleEditSubject} disabled={isSavingSubject}>
+                {isSavingSubject ? (
+                  <ActivityIndicator size="small" color={colors.primary} />
+                ) : (
+                  <Text style={[styles.modalDone, { color: colors.primary }]}>Save</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={styles.modalContent}>
+              <View style={[styles.formSection, { backgroundColor: colors.card }]}>
+                <Text style={[styles.formLabel, { color: colors.textSecondary }]}>SUBJECT CODE *</Text>
+                <TextInput
+                  style={[styles.textInput, { color: colors.text, borderColor: colors.border }]}
+                  placeholder="e.g., CS101"
+                  placeholderTextColor={colors.textTertiary}
+                  value={editSubjectCode}
+                  onChangeText={setEditSubjectCode}
+                  autoCapitalize="characters"
+                />
+
+                <Text style={[styles.formLabel, { color: colors.textSecondary, marginTop: Spacing.md }]}>SUBJECT NAME *</Text>
+                <TextInput
+                  style={[styles.textInput, { color: colors.text, borderColor: colors.border }]}
+                  placeholder="e.g., Introduction to Computer Science"
+                  placeholderTextColor={colors.textTertiary}
+                  value={editSubjectName}
+                  onChangeText={setEditSubjectName}
+                />
+
+                <Text style={[styles.formLabel, { color: colors.textSecondary, marginTop: Spacing.md }]}>
+                  DESCRIPTION (OPTIONAL)
+                </Text>
+                <TextInput
+                  style={[styles.textArea, { color: colors.text, borderColor: colors.border }]}
+                  placeholder="Brief description of the subject..."
+                  placeholderTextColor={colors.textTertiary}
+                  value={editSubjectDescription}
+                  onChangeText={setEditSubjectDescription}
+                  multiline
+                  numberOfLines={4}
+                  textAlignVertical="top"
+                />
+              </View>
+            </ScrollView>
+          </View>
+        </Modal>
 
         {/* Add Topic Modal */}
         <Modal
@@ -1764,6 +2251,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.md,
     paddingVertical: Spacing.sm,
     fontSize: FontSizes.md,
+  },
+  textArea: {
+    borderWidth: 1,
+    borderRadius: BorderRadius.md,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    fontSize: FontSizes.md,
+    minHeight: 100,
+    textAlignVertical: 'top',
   },
   textAreaInput: {
     borderWidth: 1,

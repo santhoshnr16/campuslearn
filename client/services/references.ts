@@ -17,6 +17,7 @@ export interface ReferenceDocument {
   upload_timestamp: string;
   processed_at: string | null;
   parsed_question_count?: number | null;
+  is_public?: boolean;
 }
 
 export interface ReferenceMaterialsResponse {
@@ -90,11 +91,11 @@ export const referencesService = {
       timeout: 600000,
       onUploadProgress: onUploadProgress
         ? (progressEvent) => {
-            if (progressEvent.total) {
-              const pct = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-              onUploadProgress(pct);
-            }
+          if (progressEvent.total) {
+            const pct = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+            onUploadProgress(pct);
           }
+        }
         : undefined,
     });
 
@@ -128,11 +129,11 @@ export const referencesService = {
       timeout: 600000,
       onUploadProgress: onUploadProgress
         ? (progressEvent) => {
-            if (progressEvent.total) {
-              const pct = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-              onUploadProgress(pct);
-            }
+          if (progressEvent.total) {
+            const pct = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+            onUploadProgress(pct);
           }
+        }
         : undefined,
     });
 
@@ -166,14 +167,22 @@ export const referencesService = {
       timeout: 600000,
       onUploadProgress: onUploadProgress
         ? (progressEvent) => {
-            if (progressEvent.total) {
-              const pct = Math.round((progressEvent.loaded * 100) / progressEvent.total);
-              onUploadProgress(pct);
-            }
+          if (progressEvent.total) {
+            const pct = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+            onUploadProgress(pct);
           }
+        }
         : undefined,
     });
 
+    return response.data;
+  },
+
+  /**
+   * Toggle student visibility of a reference document
+   */
+  async toggleVisibility(documentId: string): Promise<{ document_id: string; is_public: boolean; message: string }> {
+    const response = await apiClient.patch(`/documents/${documentId}/toggle-visibility`);
     return response.data;
   },
 

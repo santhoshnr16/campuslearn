@@ -81,6 +81,62 @@ def get_badges(streak_count: int) -> List[str]:
     return badges
 
 
+async def generate_tutor_feedback(
+    question_details: list, correct_count: int, total_questions: int
+) -> Optional[str]:
+    """Generate personalized AI tutor feedback using the LLM service.
+    
+    Args:
+        question_details: List of dicts with question_text, options, selected_answer, correct_answer, is_correct
+        correct_count: Number of correct answers
+        total_questions: Total number of questions
+    
+    Returns:
+        Tutor feedback string or None if LLM is unavailable
+    """
+    try:
+        from app.services.llm_service import LLMService
+        llm = LLMService()
+        
+        # Build the question summary for the prompt
+        q_summary_parts = []
+        for i, q in enumerate(question_details, 1):
+            status = "✅ Correct" if q["is_correct"] else "❌ Incorrect"
+            q_summary_parts.append(
+                f"Q{i}: {q['question_text']}\n"
+                f"  Student's answer: {q['selected_answer']}\n"
+                f"  Correct answer: {q['correct_answer']}\n"
+                f"  Result: {status}"
+            )
+        q_summary = "\n\n".join(q_summary_parts)
+        
+        system_prompt = (
+            "You are a warm, encouraging AI tutor for a college learning platform. "
+            "After a student completes a quiz, you give a brief personalized summary. "
+            "Praise specific correct concepts. For missed questions, gently explain the right answer. "
+            "Keep your response concise (3-6 sentences), conversational, and motivating. "
+            "Do not use markdown headers. Use plain text with occasional emojis."
+        )
+        
+        prompt = (
+            f"A student just scored {correct_count}/{total_questions} on a quiz.\n\n"
+            f"Here are the details:\n\n{q_summary}\n\n"
+            f"Give a short, personalized tutor response."
+        )
+        
+        feedback = await llm.generate_with_fallback(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            temperature=0.7,
+            max_tokens=500,
+            fallback_response=None,
+        )
+        return feedback.strip() if feedback else None
+    except Exception as e:
+        logger.warning(f"Tutor feedback generation failed: {e}")
+        return None
+
+
 class GamificationService:
     """Service handling all gamification logic."""
 
@@ -90,27 +146,46 @@ class GamificationService:
     # --- Enrollment ---
 
     async def enroll_student(self, student_id: UUID, subject_id: UUID) -> Enrollment:
-        """Enroll a student in a subject."""
+        """Request enrollment in a subject (creates a pending enrollment)."""
         existing = await self.db.execute(
             select(Enrollment).where(
                 and_(Enrollment.student_id == student_id, Enrollment.subject_id == subject_id)
             )
         )
-        if existing.scalar_one_or_none():
-            raise ValueError("Already enrolled in this subject")
+        existing_enrollment = existing.scalar_one_or_none()
+        if existing_enrollment:
+            if existing_enrollment.status == "rejected":
+                # Allow re-requesting after rejection
+                existing_enrollment.status = "pending"
+                existing_enrollment.reviewed_at = None
+                await self.db.commit()
+                await self.db.refresh(existing_enrollment)
+                return existing_enrollment
+            raise ValueError("Already enrolled or enrollment pending for this subject")
         
-        enrollment = Enrollment(student_id=student_id, subject_id=subject_id)
+        enrollment = Enrollment(
+            student_id=student_id,
+            subject_id=subject_id,
+            status="pending",
+            is_active=False,
+        )
         self.db.add(enrollment)
         await self.db.commit()
         await self.db.refresh(enrollment)
         return enrollment
 
     async def get_enrollments(self, student_id: UUID) -> List[dict]:
-        """Get all enrollments for a student."""
+        """Get all approved enrollments for a student."""
         result = await self.db.execute(
             select(Enrollment, Subject)
             .join(Subject, Enrollment.subject_id == Subject.id)
-            .where(and_(Enrollment.student_id == student_id, Enrollment.is_active == True))
+            .where(
+                and_(
+                    Enrollment.student_id == student_id,
+                    Enrollment.status == "approved",
+                    Enrollment.is_active == True,
+                )
+            )
         )
         rows = result.all()
         return [
@@ -120,11 +195,122 @@ class GamificationService:
                 "subject_id": e.subject_id,
                 "enrolled_at": e.enrolled_at,
                 "is_active": e.is_active,
+                "status": e.status,
                 "subject_name": s.name,
                 "subject_code": s.code,
             }
             for e, s in rows
         ]
+
+    async def get_all_enrollments(self, student_id: UUID) -> List[dict]:
+        """Get all enrollments for a student (including pending/rejected)."""
+        result = await self.db.execute(
+            select(Enrollment, Subject)
+            .join(Subject, Enrollment.subject_id == Subject.id)
+            .where(Enrollment.student_id == student_id)
+            .order_by(Enrollment.enrolled_at.desc())
+        )
+        rows = result.all()
+        return [
+            {
+                "id": e.id,
+                "student_id": e.student_id,
+                "subject_id": e.subject_id,
+                "enrolled_at": e.enrolled_at,
+                "is_active": e.is_active,
+                "status": e.status,
+                "subject_name": s.name,
+                "subject_code": s.code,
+            }
+            for e, s in rows
+        ]
+
+    async def get_pending_enrollments(self, teacher_id: UUID, subject_id: Optional[UUID] = None) -> List[dict]:
+        """Get pending enrollment requests for a teacher's subjects."""
+        query = (
+            select(Enrollment, User.full_name, User.email, Subject.name)
+            .join(Subject, Enrollment.subject_id == Subject.id)
+            .join(User, Enrollment.student_id == User.id)
+            .where(
+                and_(
+                    Subject.user_id == teacher_id,
+                    Enrollment.status == "pending",
+                )
+            )
+        )
+        if subject_id:
+            query = query.where(Enrollment.subject_id == subject_id)
+        query = query.order_by(Enrollment.enrolled_at.asc())
+
+        result = await self.db.execute(query)
+        rows = result.all()
+        return [
+            {
+                "id": e.id,
+                "student_id": e.student_id,
+                "student_name": full_name or "Unknown",
+                "student_email": email,
+                "subject_id": e.subject_id,
+                "subject_name": subj_name,
+                "enrolled_at": e.enrolled_at,
+                "status": e.status,
+            }
+            for e, full_name, email, subj_name in rows
+        ]
+
+    async def approve_enrollment(self, enrollment_id: UUID, teacher_id: UUID) -> Enrollment:
+        """Approve a pending enrollment request."""
+        result = await self.db.execute(
+            select(Enrollment)
+            .join(Subject, Enrollment.subject_id == Subject.id)
+            .where(
+                and_(
+                    Enrollment.id == enrollment_id,
+                    Subject.user_id == teacher_id,
+                )
+            )
+        )
+        enrollment = result.scalar_one_or_none()
+        if not enrollment:
+            raise ValueError("Enrollment not found or unauthorized")
+        if enrollment.status != "pending":
+            raise ValueError(f"Enrollment is already {enrollment.status}")
+        
+        enrollment.status = "approved"
+        enrollment.is_active = True
+        enrollment.reviewed_at = datetime.now(timezone.utc)
+        await self.db.commit()
+        await self.db.refresh(enrollment)
+        logger.info(f"Enrollment {enrollment_id} approved by teacher {teacher_id}")
+        return enrollment
+
+    async def reject_enrollment(self, enrollment_id: UUID, teacher_id: UUID) -> Enrollment:
+        """Reject a pending enrollment request."""
+        result = await self.db.execute(
+            select(Enrollment)
+            .join(Subject, Enrollment.subject_id == Subject.id)
+            .where(
+                and_(
+                    Enrollment.id == enrollment_id,
+                    Subject.user_id == teacher_id,
+                )
+            )
+        )
+        enrollment = result.scalar_one_or_none()
+        if not enrollment:
+            raise ValueError("Enrollment not found or unauthorized")
+        # Allow rejecting pending requests OR revoking already-approved enrollments
+        if enrollment.status not in ("pending", "approved"):
+            raise ValueError(f"Cannot reject/revoke enrollment with status '{enrollment.status}'")
+        
+        action = "revoked" if enrollment.status == "approved" else "rejected"
+        enrollment.status = "rejected"
+        enrollment.is_active = False
+        enrollment.reviewed_at = datetime.now(timezone.utc)
+        await self.db.commit()
+        await self.db.refresh(enrollment)
+        logger.info(f"Enrollment {enrollment_id} {action} by teacher {teacher_id}")
+        return enrollment
 
     # --- Available Subjects ---
 
@@ -137,13 +323,13 @@ class GamificationService:
         )
         subjects = result.all()
         
-        # Get enrolled subject IDs
-        enrolled_result = await self.db.execute(
-            select(Enrollment.subject_id).where(
-                and_(Enrollment.student_id == student_id, Enrollment.is_active == True)
+        # Get enrollment status per subject
+        enroll_result = await self.db.execute(
+            select(Enrollment.subject_id, Enrollment.status).where(
+                Enrollment.student_id == student_id
             )
         )
-        enrolled_ids = {row[0] for row in enrolled_result.all()}
+        enrollment_map = {row[0]: row[1] for row in enroll_result.all()}
         
         # Get progress per subject
         progress_result = await self.db.execute(
@@ -166,7 +352,8 @@ class GamificationService:
                 "teacher_name": full_name or username,
                 "total_topics": s.total_topics,
                 "total_questions": s.total_questions,
-                "is_enrolled": s.id in enrolled_ids,
+                "is_enrolled": enrollment_map.get(s.id) == "approved",
+                "enrollment_status": enrollment_map.get(s.id),
                 "mastery": progress_map.get(s.id, {}).get("mastery", 0.0),
                 "xp_earned": progress_map.get(s.id, {}).get("xp", 0),
             }
@@ -348,6 +535,7 @@ class GamificationService:
         total_marks = 0
         hearts_remaining = await self.get_hearts(student_id)
         
+        question_details = []  # For AI tutor feedback
         for ans in answers:
             question = await self.db.get(Question, ans["question_id"])
             if not question:
@@ -355,7 +543,11 @@ class GamificationService:
             
             is_correct = False
             if question.correct_answer:
-                is_correct = ans["selected_answer"].strip().lower() == question.correct_answer.strip().lower()
+                # Compare just the option letter (first char) to handle format variations
+                # e.g. selected might be "A" or "A) text", correct might be "A" or "a"
+                selected = ans["selected_answer"].strip()
+                correct = question.correct_answer.strip()
+                is_correct = selected[0:1].upper() == correct[0:1].upper()
             
             difficulty = question.difficulty_level or "easy"
             xp = calculate_xp(difficulty, user.streak_count, is_correct)
@@ -375,6 +567,13 @@ class GamificationService:
                 "correct_answer": question.correct_answer or "",
                 "xp_earned": xp,
                 "explanation": question.explanation,
+            })
+            question_details.append({
+                "question_text": question.question_text,
+                "options": question.options or [],
+                "selected_answer": ans["selected_answer"].strip(),
+                "correct_answer": question.correct_answer or "",
+                "is_correct": is_correct,
             })
         
         total_questions = len(results)
@@ -396,6 +595,10 @@ class GamificationService:
         mastery_change = 0.0
         new_mastery = 0.0
         if topic_id:
+            # Use upsert to handle race conditions
+            from sqlalchemy.dialects.postgresql import insert as pg_insert
+            
+            # First, try to get existing progress
             progress = await self.db.execute(
                 select(StudentProgress).where(
                     and_(
@@ -406,14 +609,37 @@ class GamificationService:
                 )
             )
             p = progress.scalar_one_or_none()
+            
             if not p:
-                p = StudentProgress(
+                # Use upsert to safely insert or update
+                stmt = pg_insert(StudentProgress).values(
                     student_id=student_id,
                     subject_id=subject_id,
                     topic_id=topic_id,
+                    topic_mastery=0.0,
+                    xp_earned=0,
+                    current_level=1,
+                    accuracy_percentage=0.0,
+                    questions_attempted=0,
+                    questions_correct=0,
+                    current_difficulty="easy",
+                ).on_conflict_do_nothing(
+                    constraint="uq_student_topic_progress"
                 )
-                self.db.add(p)
+                await self.db.execute(stmt)
                 await self.db.flush()
+                
+                # Re-fetch the record (either just inserted or already existed)
+                progress = await self.db.execute(
+                    select(StudentProgress).where(
+                        and_(
+                            StudentProgress.student_id == student_id,
+                            StudentProgress.subject_id == subject_id,
+                            StudentProgress.topic_id == topic_id,
+                        )
+                    )
+                )
+                p = progress.scalar_one()
             
             old_mastery = p.topic_mastery
             p.questions_attempted += total_questions
@@ -436,6 +662,11 @@ class GamificationService:
             
             p.current_level = new_level
         
+        # Generate AI tutor feedback
+        tutor_feedback = await generate_tutor_feedback(
+            question_details, correct_count, total_questions
+        )
+        
         # Save test history
         test = TestHistory(
             student_id=student_id,
@@ -452,6 +683,7 @@ class GamificationService:
                 {"question_id": str(r["question_id"]), "correct": r["is_correct"], "xp": r["xp_earned"]}
                 for r in results
             ],
+            tutor_feedback=tutor_feedback,
         )
         self.db.add(test)
         
@@ -491,7 +723,79 @@ class GamificationService:
             "new_level": new_level,
             "results": results,
             "accuracy": accuracy,
+            "tutor_feedback": tutor_feedback,
         }
+
+    async def process_test_submission(
+        self, student_id: UUID, subject_id: UUID, title: str, 
+        correct_count: int, total_marks: int, total_questions: int, 
+        total_time_seconds: int, results: list,
+        question_details: Optional[list] = None,
+    ) -> dict:
+        """Process a teacher test submission to grant XP and update gamification state."""
+        user = await self.db.get(User, student_id)
+        if not user:
+            return {}
+
+        total_xp = 0
+        for r in results:
+            if r["is_correct"]:
+                # Award XP based on question difficulty, if available. For tests, default to medium
+                # We could pull difficulty from the question, but for simplicity:
+                xp = calculate_xp("medium", user.streak_count, True)
+                total_xp += xp
+
+        if correct_count == total_questions and total_questions > 0:
+            total_xp += XP_PERFECT_BONUS
+
+        user.xp_total += total_xp
+
+        # Generate AI tutor feedback
+        tutor_feedback = None
+        if question_details:
+            tutor_feedback = await generate_tutor_feedback(
+                question_details, correct_count, total_questions
+            )
+
+        # Save test history so it appears in profile 
+        test = TestHistory(
+            student_id=student_id,
+            subject_id=subject_id,
+            score=correct_count,
+            total_marks=total_marks,
+            total_questions=total_questions,
+            correct_answers=correct_count,
+            xp_earned=total_xp,
+            time_taken_seconds=total_time_seconds,
+            difficulty="test",  # Special marker for teacher tests
+            answers=[
+                {"question_id": r["question_id"], "correct": r["is_correct"], "xp": 0}
+                for r in results
+            ],
+            tutor_feedback=tutor_feedback,
+        )
+        self.db.add(test)
+        
+        # Update daily activity
+        today = date.today()
+        daily = await self.db.execute(
+            select(DailyActivity).where(
+                and_(DailyActivity.student_id == student_id, DailyActivity.activity_date == today)
+            )
+        )
+        d = daily.scalar_one_or_none()
+        if not d:
+            d = DailyActivity(student_id=student_id, activity_date=today)
+            self.db.add(d)
+            await self.db.flush()
+        
+        d.xp_earned += total_xp
+        d.questions_answered += total_questions
+        d.correct_answers += correct_count
+        d.time_spent_seconds += total_time_seconds or 0
+        
+        await self.db.commit()
+        return {"xp_earned": total_xp, "tutor_feedback": tutor_feedback}
 
     # --- Profile ---
 
@@ -546,43 +850,108 @@ class GamificationService:
 
     # --- Leaderboard ---
 
-    async def get_leaderboard(self, student_id: UUID, limit: int = 20) -> dict:
-        """Get XP leaderboard."""
-        result = await self.db.execute(
-            select(User)
-            .where(User.role == "student")
-            .order_by(desc(User.xp_total))
-            .limit(limit)
-        )
-        users = result.scalars().all()
+    async def get_leaderboard(self, student_id: UUID, limit: int = 20, subject_id: Optional[UUID] = None) -> dict:
+        """Get XP leaderboard. If subject_id is provided, returns class-wise leaderboard."""
+        from app.models.gamification import Enrollment
         
-        entries = []
-        current_rank = None
-        for i, u in enumerate(users, 1):
-            entries.append({
-                "rank": i,
-                "user_id": u.id,
-                "username": u.username,
-                "full_name": u.full_name,
-                "avatar_url": u.avatar_url,
-                "xp_total": u.xp_total,
-                "streak_count": u.streak_count,
-                "level": calculate_level(u.xp_total),
-            })
-            if u.id == student_id:
-                current_rank = i
-        
-        # Count total students
-        total = await self.db.execute(
-            select(func.count(User.id)).where(User.role == "student")
-        )
-        total_students = total.scalar() or 0
-        
-        return {
-            "entries": entries,
-            "total_students": total_students,
-            "current_user_rank": current_rank,
-        }
+        if subject_id:
+            # Class-wise leaderboard: only students enrolled in this subject
+            # Calculate XP from their test history in this subject
+            from app.models.gamification import TestHistory
+            result = await self.db.execute(
+                select(User, TestHistory)
+                .join(Enrollment, User.id == Enrollment.student_id)
+                .outerjoin(
+                    TestHistory,
+                    (User.id == TestHistory.student_id) & (TestHistory.subject_id == subject_id)
+                )
+                .where(User.role == "student")
+                .where(Enrollment.subject_id == subject_id)
+                .where(Enrollment.status == "approved")
+            )
+            rows = result.all()
+            
+            # Aggregate XP per user for this subject
+            user_xp: dict = {}
+            for user, history in rows:
+                if user.id not in user_xp:
+                    user_xp[user.id] = {
+                        "user": user,
+                        "xp": 0
+                    }
+                if history:
+                    user_xp[user.id]["xp"] += history.xp_earned
+            
+            # Sort by XP descending
+            sorted_users = sorted(user_xp.values(), key=lambda x: x["xp"], reverse=True)[:limit]
+            
+            entries = []
+            current_rank = None
+            for i, item in enumerate(sorted_users, 1):
+                u = item["user"]
+                entries.append({
+                    "rank": i,
+                    "user_id": u.id,
+                    "username": u.username,
+                    "full_name": u.full_name,
+                    "avatar_url": u.avatar_url,
+                    "xp_total": item["xp"],
+                    "streak_count": u.streak_count,
+                    "level": calculate_level(item["xp"]),
+                })
+                if u.id == student_id:
+                    current_rank = i
+            
+            # Count total students in this subject
+            total = await self.db.execute(
+                select(func.count(Enrollment.id))
+                .where(Enrollment.subject_id == subject_id)
+                .where(Enrollment.status == "approved")
+            )
+            total_students = total.scalar() or 0
+            
+            return {
+                "entries": entries,
+                "total_students": total_students,
+                "current_user_rank": current_rank,
+            }
+        else:
+            # Global leaderboard
+            result = await self.db.execute(
+                select(User)
+                .where(User.role == "student")
+                .order_by(desc(User.xp_total))
+                .limit(limit)
+            )
+            users = result.scalars().all()
+            
+            entries = []
+            current_rank = None
+            for i, u in enumerate(users, 1):
+                entries.append({
+                    "rank": i,
+                    "user_id": u.id,
+                    "username": u.username,
+                    "full_name": u.full_name,
+                    "avatar_url": u.avatar_url,
+                    "xp_total": u.xp_total,
+                    "streak_count": u.streak_count,
+                    "level": calculate_level(u.xp_total),
+                })
+                if u.id == student_id:
+                    current_rank = i
+            
+            # Count total students
+            total = await self.db.execute(
+                select(func.count(User.id)).where(User.role == "student")
+            )
+            total_students = total.scalar() or 0
+            
+            return {
+                "entries": entries,
+                "total_students": total_students,
+                "current_user_rank": current_rank,
+            }
 
     # --- Test History ---
 
@@ -609,6 +978,7 @@ class GamificationService:
                 "xp_earned": t.xp_earned,
                 "time_taken_seconds": t.time_taken_seconds,
                 "difficulty": t.difficulty,
+                "tutor_feedback": t.tutor_feedback,
                 "created_at": t.created_at,
             }
             for t in tests

@@ -609,7 +609,7 @@ export default function ProfileScreen() {
                   </View>
                 </View>
                 <Text style={[styles.bloomBenefit, { color: colors.textSecondary }]}>
-                  QuestionGen uses Bloom&apos;s Taxonomy to generate questions at different cognitive levels, ensuring comprehensive assessment of student learning.
+                  Campus Learn uses Bloom&apos;s Taxonomy to generate questions at different cognitive levels, ensuring comprehensive assessment of student learning.
                 </Text>
               </View>
               <View style={[styles.helpDivider, { backgroundColor: colors.border }]} />
@@ -650,13 +650,13 @@ export default function ProfileScreen() {
               <View style={[styles.aboutIconContainer, { backgroundColor: colors.primary + '20' }]}>
                 <IconSymbol name="sparkles" size={48} color={colors.primary} />
               </View>
-              <Text style={[styles.aboutAppName, { color: colors.text }]}>QuestionGen AI</Text>
+              <Text style={[styles.aboutAppName, { color: colors.text }]}>Campus Learn</Text>
               <Text style={[styles.aboutVersion, { color: colors.textSecondary }]}>Version 1.0.0</Text>
             </View>
             <View style={[styles.aboutSection, { borderColor: colors.border }]}>
               <Text style={[styles.aboutSectionTitle, { color: colors.textSecondary }]}>ABOUT</Text>
               <Text style={[styles.aboutText, { color: colors.text }]}>
-                QuestionGen AI is an intelligent question generation system powered by advanced AI.
+                Campus Learn is an intelligent learning platform powered by advanced AI.
                 Generate high-quality examination questions from your course materials instantly.
               </Text>
             </View>
@@ -682,7 +682,7 @@ export default function ProfileScreen() {
               </View>
             </View>
             <Text style={[styles.copyright, { color: colors.textTertiary }]}>
-              © {new Date().getFullYear()} QuestionGen AI. All rights reserved.
+              © {new Date().getFullYear()} Campus Learn. All rights reserved.
             </Text>
             <TouchableOpacity
               style={[styles.modalButtonFull, { backgroundColor: colors.primary }]}
@@ -787,7 +787,7 @@ export default function ProfileScreen() {
 
       {/* Version */}
       <Text style={[styles.versionText, { color: colors.textTertiary }]}>
-        QuestionGen AI v1.0.0
+        Campus Learn v1.0.0
       </Text>
 
       {/* Bottom padding for floating tab bar */}

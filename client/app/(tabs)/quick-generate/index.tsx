@@ -35,21 +35,21 @@ export default function QuickGenerateScreen() {
   const colors = Colors[colorScheme ?? 'light'];
   const isDark = colorScheme === 'dark';
   const { showError, showSuccess, showWarning } = useToast();
-  
+
   // Form state
   const [selectedFile, setSelectedFile] = useState<{ uri: string; name: string; type: string } | null>(null);
   const [context, setContext] = useState('');
-  const [count, setCount] = useState(5);
+  const [count, setCount] = useState(10);
   const [customCount, setCustomCount] = useState('');
   const [showCustomInput, setShowCustomInput] = useState(false);
-  const [selectedTypes, setSelectedTypes] = useState<QuestionType[]>(['mcq', 'short_answer']);
+  const [selectedTypes, setSelectedTypes] = useState<QuestionType[]>(['mcq']);
   const [difficulty, setDifficulty] = useState<Difficulty>('medium');
-  
+
   // Marks per question type
   const [marksMcq, setMarksMcq] = useState(1);
   const [marksShort, setMarksShort] = useState(2);
   const [marksLong, setMarksLong] = useState(5);
-  
+
   // Subject/Topic linking
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [topics, setTopics] = useState<Topic[]>([]);
@@ -60,7 +60,7 @@ export default function QuickGenerateScreen() {
   const [loadingSubjects, setLoadingSubjects] = useState(false);
   const [loadingTopics, setLoadingTopics] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  
+
   // Generation state
   const [isGenerating, setIsGenerating] = useState(false);
   const [progress, setProgress] = useState<QuickGenerateProgress | null>(null);
@@ -138,7 +138,7 @@ export default function QuickGenerateScreen() {
         type: 'application/pdf',
         copyToCacheDirectory: true,
       });
-      
+
       if (!result.canceled && result.assets[0]) {
         setSelectedFile({
           uri: result.assets[0].uri,
@@ -199,7 +199,7 @@ export default function QuickGenerateScreen() {
           duration: 300,
           useNativeDriver: false,
         }).start();
-        
+
         if (progressUpdate.question) {
           console.log('[QuickGenerate UI] New question received:', progressUpdate.question.id);
           setGeneratedQuestions(prev => [...prev, progressUpdate.question!]);
@@ -224,8 +224,8 @@ export default function QuickGenerateScreen() {
 
   const toggleType = (type: QuestionType) => {
     selectionImpact();
-    setSelectedTypes(prev => 
-      prev.includes(type) 
+    setSelectedTypes(prev =>
+      prev.includes(type)
         ? prev.filter(t => t !== type)
         : [...prev, type]
     );
@@ -273,10 +273,10 @@ export default function QuickGenerateScreen() {
           onPress={handlePickDocument}
           disabled={isGenerating}
         >
-          <IconSymbol 
-            name={selectedFile ? "checkmark.circle.fill" : "doc.badge.plus"} 
-            size={32} 
-            color={selectedFile ? colors.success : colors.primary} 
+          <IconSymbol
+            name={selectedFile ? "checkmark.circle.fill" : "doc.badge.plus"}
+            size={32}
+            color={selectedFile ? colors.success : colors.primary}
           />
           <View style={styles.uploadTextContainer}>
             <Text style={[styles.uploadTitle, { color: colors.text }]}>
@@ -317,14 +317,14 @@ export default function QuickGenerateScreen() {
       {/* Options Section */}
       <GlassCard style={styles.section}>
         {/* <Text style={[styles.sectionTitle, { color: colors.text }]}>Options</Text> */}
-        
+
         {/* Question Types */}
         {/* <Text style={[styles.optionLabel, { color: colors.textSecondary }]}>Question Types</Text> */}
         <View style={styles.typesContainer}>
           {[
             { type: 'mcq' as QuestionType, label: 'MCQ', icon: 'list.bullet' },
-            { type: 'short_answer' as QuestionType, label: 'Short Answer', icon: 'text.alignleft' },
-            { type: 'long_answer' as QuestionType, label: 'Long Answer', icon: 'doc.text' },
+            { type: 'short_answer' as QuestionType, label: 'Short Ans', icon: 'text.alignleft' },
+            { type: 'long_answer' as QuestionType, label: 'Long Ans', icon: 'doc.text' },
           ].map(({ type, label, icon }) => (
             <TouchableOpacity
               key={type}
@@ -336,10 +336,10 @@ export default function QuickGenerateScreen() {
               onPress={() => toggleType(type)}
               disabled={isGenerating}
             >
-              <IconSymbol 
-                name={icon as any} 
-                size={18} 
-                color={selectedTypes.includes(type) ? '#FFFFFF' : colors.textSecondary} 
+              <IconSymbol
+                name={icon as any}
+                size={18}
+                color={selectedTypes.includes(type) ? '#FFFFFF' : colors.textSecondary}
               />
               <Text style={[
                 styles.typeButtonText,
@@ -531,17 +531,17 @@ export default function QuickGenerateScreen() {
 
       {/* Subject/Topic Linking Section */}
       <GlassCard style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: colors.text }]}>Link to Subject (Optional)</Text>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Link to Subject</Text>
         <Text style={[styles.helperText, { color: colors.textTertiary, marginBottom: Spacing.md }]}>
           Associate generated questions with a subject and optionally a specific chapter
         </Text>
-        
+
         {/* Subject Picker */}
         <Text style={[styles.optionLabel, { color: colors.textSecondary }]}>Subject</Text>
         <TouchableOpacity
           style={[
             styles.pickerButton,
-            { 
+            {
               backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)',
               borderColor: colors.border,
             }
@@ -555,7 +555,7 @@ export default function QuickGenerateScreen() {
             <>
               <IconSymbol name="book.fill" size={18} color={selectedSubjectId ? colors.primary : colors.textSecondary} />
               <Text style={[styles.pickerText, { color: selectedSubjectId ? colors.text : colors.textTertiary }]}>
-                {getSelectedSubject()?.name || 'Select a subject (optional)'}
+                {getSelectedSubject()?.name || 'Select a subject'}
               </Text>
               <IconSymbol name="chevron.down" size={14} color={colors.textSecondary} />
             </>
@@ -580,7 +580,7 @@ export default function QuickGenerateScreen() {
             <TouchableOpacity
               style={[
                 styles.pickerButton,
-                { 
+                {
                   backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)',
                   borderColor: colors.border,
                 }
@@ -632,39 +632,39 @@ export default function QuickGenerateScreen() {
           <View style={styles.modalDivider} />
           <ScrollView style={styles.modalScrollContent}>
 
-              {subjects.length === 0 ? (
-                <View style={styles.emptyList}>
-                  <Text style={[styles.emptyListText, { color: colors.textSecondary }]}>
-                    No subjects available. Create a subject first.
-                  </Text>
-                </View>
-              ) : (
-                subjects.map((subject) => (
-                  <TouchableOpacity
-                    key={subject.id}
-                    style={[
-                      styles.modalItem,
-                      { borderBottomColor: colors.border },
-                      selectedSubjectId === subject.id && { backgroundColor: colors.primary + '15' }
-                    ]}
-                    onPress={() => {
-                      setSelectedSubjectId(subject.id);
-                      setSelectedTopicId(null);
-                      setShowSubjectPicker(false);
-                    }}
-                  >
-                    <View style={styles.modalItemContent}>
-                      <Text style={[styles.modalItemTitle, { color: colors.text }]}>{subject.name}</Text>
-                      <Text style={[styles.modalItemSubtitle, { color: colors.textSecondary }]}>
-                        {subject.code} • {subject.total_topics} topics
-                      </Text>
-                    </View>
-                    {selectedSubjectId === subject.id && (
-                      <IconSymbol name="checkmark.circle.fill" size={22} color={colors.primary} />
-                    )}
-                  </TouchableOpacity>
-                ))
-              )}
+            {subjects.length === 0 ? (
+              <View style={styles.emptyList}>
+                <Text style={[styles.emptyListText, { color: colors.textSecondary }]}>
+                  No subjects available. Create a subject first.
+                </Text>
+              </View>
+            ) : (
+              subjects.map((subject) => (
+                <TouchableOpacity
+                  key={subject.id}
+                  style={[
+                    styles.modalItem,
+                    { borderBottomColor: colors.border },
+                    selectedSubjectId === subject.id && { backgroundColor: colors.primary + '15' }
+                  ]}
+                  onPress={() => {
+                    setSelectedSubjectId(subject.id);
+                    setSelectedTopicId(null);
+                    setShowSubjectPicker(false);
+                  }}
+                >
+                  <View style={styles.modalItemContent}>
+                    <Text style={[styles.modalItemTitle, { color: colors.text }]}>{subject.name}</Text>
+                    <Text style={[styles.modalItemSubtitle, { color: colors.textSecondary }]}>
+                      {subject.code} • {subject.total_topics} topics
+                    </Text>
+                  </View>
+                  {selectedSubjectId === subject.id && (
+                    <IconSymbol name="checkmark.circle.fill" size={22} color={colors.primary} />
+                  )}
+                </TouchableOpacity>
+              ))
+            )}
           </ScrollView>
         </View>
       </Modal>
@@ -689,40 +689,40 @@ export default function QuickGenerateScreen() {
           <View style={styles.modalDivider} />
           <ScrollView style={styles.modalScrollContent}>
 
-              {topics.length === 0 ? (
-                <View style={styles.emptyList}>
-                  <Text style={[styles.emptyListText, { color: colors.textSecondary }]}>
-                    No topics available for this subject.
-                  </Text>
-                </View>
-              ) : (
-                topics.map((topic) => (
-                  <TouchableOpacity
-                    key={topic.id}
-                    style={[
-                      styles.modalItem,
-                      { borderBottomColor: colors.border },
-                      selectedTopicId === topic.id && { backgroundColor: colors.primary + '15' }
-                    ]}
-                    onPress={() => {
-                      setSelectedTopicId(topic.id);
-                      setShowTopicPicker(false);
-                    }}
-                  >
-                    <View style={styles.modalItemContent}>
-                      <Text style={[styles.modalItemTitle, { color: colors.text }]}>{topic.name}</Text>
-                      {topic.description && (
-                        <Text style={[styles.modalItemSubtitle, { color: colors.textSecondary }]} numberOfLines={1}>
-                          {topic.description}
-                        </Text>
-                      )}
-                    </View>
-                    {selectedTopicId === topic.id && (
-                      <IconSymbol name="checkmark.circle.fill" size={22} color={colors.primary} />
+            {topics.length === 0 ? (
+              <View style={styles.emptyList}>
+                <Text style={[styles.emptyListText, { color: colors.textSecondary }]}>
+                  No topics available for this subject.
+                </Text>
+              </View>
+            ) : (
+              topics.map((topic) => (
+                <TouchableOpacity
+                  key={topic.id}
+                  style={[
+                    styles.modalItem,
+                    { borderBottomColor: colors.border },
+                    selectedTopicId === topic.id && { backgroundColor: colors.primary + '15' }
+                  ]}
+                  onPress={() => {
+                    setSelectedTopicId(topic.id);
+                    setShowTopicPicker(false);
+                  }}
+                >
+                  <View style={styles.modalItemContent}>
+                    <Text style={[styles.modalItemTitle, { color: colors.text }]}>{topic.name}</Text>
+                    {topic.description && (
+                      <Text style={[styles.modalItemSubtitle, { color: colors.textSecondary }]} numberOfLines={1}>
+                        {topic.description}
+                      </Text>
                     )}
-                  </TouchableOpacity>
-                ))
-              )}
+                  </View>
+                  {selectedTopicId === topic.id && (
+                    <IconSymbol name="checkmark.circle.fill" size={22} color={colors.primary} />
+                  )}
+                </TouchableOpacity>
+              ))
+            )}
           </ScrollView>
         </View>
       </Modal>
@@ -733,17 +733,17 @@ export default function QuickGenerateScreen() {
           <Text style={[styles.sectionTitle, { color: colors.text }]}>Generating...</Text>
           <View style={styles.progressContainer}>
             <View style={[styles.progressBar, { backgroundColor: colors.border }]}>
-              <Animated.View 
+              <Animated.View
                 style={[
                   styles.progressFill,
-                  { 
+                  {
                     backgroundColor: colors.primary,
                     width: progressAnim.interpolate({
                       inputRange: [0, 1],
                       outputRange: ['0%', '100%'],
                     })
                   }
-                ]} 
+                ]}
               />
             </View>
             <Text style={[styles.progressText, { color: colors.textSecondary }]}>
@@ -771,9 +771,9 @@ export default function QuickGenerateScreen() {
                   <Text style={styles.questionBadgeText}>{q.question_type?.toUpperCase()}</Text>
                 </View>
                 {q.difficulty_level && (
-                  <View style={[styles.difficultyBadge, { 
-                    backgroundColor: q.difficulty_level === 'easy' ? '#34C759' : 
-                      q.difficulty_level === 'medium' ? '#FF9500' : '#FF3B30' 
+                  <View style={[styles.difficultyBadge, {
+                    backgroundColor: q.difficulty_level === 'easy' ? '#34C759' :
+                      q.difficulty_level === 'medium' ? '#FF9500' : '#FF3B30'
                   }]}>
                     <Text style={styles.questionBadgeText}>{q.difficulty_level.toUpperCase()}</Text>
                   </View>
@@ -788,17 +788,17 @@ export default function QuickGenerateScreen() {
 
               {/* Assigned LO / CO / Topic badges (if present) */}
               <View style={styles.generatedMetaRow}>
-                { (q as any).learning_outcome_id ? (
+                {(q as any).learning_outcome_id ? (
                   <Text style={[styles.generatedMetaText, { color: colors.textSecondary }]}>{(q as any).learning_outcome_id}</Text>
-                ) : null }
+                ) : null}
 
-                { (q as any).course_outcome_mapping && Object.keys((q as any).course_outcome_mapping).length ? (
+                {(q as any).course_outcome_mapping && Object.keys((q as any).course_outcome_mapping).length ? (
                   <Text style={[styles.generatedMetaText, { color: colors.textSecondary }]}>{Object.keys((q as any).course_outcome_mapping).join(', ')}</Text>
-                ) : null }
+                ) : null}
 
-                { q.topic_tags && q.topic_tags.length ? (
+                {q.topic_tags && q.topic_tags.length ? (
                   <Text style={[styles.generatedMetaText, { color: colors.textSecondary }]}>{q.topic_tags[0]}</Text>
-                ) : null }
+                ) : null}
               </View>
 
               {q.options && q.options.length > 0 && (
@@ -806,8 +806,8 @@ export default function QuickGenerateScreen() {
                   {q.options.map((opt, optIdx) => {
                     const isCorrect = q.correct_answer && opt.startsWith(q.correct_answer);
                     return (
-                      <View 
-                        key={optIdx} 
+                      <View
+                        key={optIdx}
                         style={[
                           styles.optionRow,
                           isCorrect && { backgroundColor: colors.success + '20', borderRadius: BorderRadius.sm, padding: 4 }
@@ -832,7 +832,7 @@ export default function QuickGenerateScreen() {
               )}
             </View>
           ))}
-          
+
           {/* Action Buttons after generation */}
           {progress?.status === 'complete' && (
             <View style={styles.actionButtons}>
@@ -902,8 +902,8 @@ export default function QuickGenerateScreen() {
               Enter Number of Questions
             </Text>
             <TextInput
-              style={[styles.customInput, { 
-                borderColor: colors.border, 
+              style={[styles.customInput, {
+                borderColor: colors.border,
                 color: colors.text,
                 backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.02)',
               }]}

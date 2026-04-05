@@ -19,6 +19,7 @@ from app.core.config import settings
 from app.models.subject import Subject, Topic
 from app.models.question import Question
 from app.models.user import User
+from app.models.gamification import Enrollment
 from app.schemas.subject import (
     SubjectCreate,
     SubjectUpdate,
@@ -30,8 +31,13 @@ from app.schemas.subject import (
     TopicResponse,
     TopicListResponse,
 )
+from app.schemas.gamification import (
+    PendingEnrollmentResponse,
+    EnrollmentActionRequest,
+)
 from app.api.v1.deps import get_current_user
 from app.services.llm_service import LLMService
+from app.services.gamification_service import GamificationService
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -212,6 +218,102 @@ async def delete_subject(
     
     await db.delete(subject)
     await db.commit()
+
+
+# ============== Enrollment Management (Teacher) ==============
+
+@router.get("/enrollments/all", response_model=list[PendingEnrollmentResponse])
+async def list_all_enrollments(
+    status_filter: Optional[str] = Query(None, description="Filter: pending, approved, rejected"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all enrollment requests across all teacher's subjects."""
+    service = GamificationService(db)
+    filter_status = status_filter or "pending"
+    
+    # Reuse get_pending_enrollments but with extended status support
+    query = (
+        select(Enrollment, User, Subject.name, Subject.code)
+        .join(Subject, Enrollment.subject_id == Subject.id)
+        .join(User, Enrollment.student_id == User.id)
+        .where(Subject.user_id == current_user.id)
+    )
+    if filter_status != "all":
+        query = query.where(Enrollment.status == filter_status)
+    query = query.order_by(Enrollment.enrolled_at.desc())
+    
+    result = await db.execute(query)
+    rows = result.all()
+    return [
+        {
+            "id": e.id,
+            "student_id": e.student_id,
+            "student_name": u.full_name or u.username or "Unknown",
+            "student_email": u.email,
+            "subject_id": e.subject_id,
+            "subject_name": subj_name,
+            "enrolled_at": e.enrolled_at,
+            "status": e.status,
+        }
+        for e, u, subj_name, _code in rows
+    ]
+
+@router.get("/{subject_id}/enrollments", response_model=list[PendingEnrollmentResponse])
+async def list_subject_enrollments(
+    subject_id: uuid.UUID,
+    status_filter: Optional[str] = Query(None, description="Filter by status: pending, approved, rejected"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List enrollment requests for a subject (teacher only)."""
+    # Verify subject ownership
+    result = await db.execute(
+        select(Subject).where(
+            Subject.id == subject_id,
+            Subject.user_id == current_user.id,
+        )
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Subject not found")
+
+    service = GamificationService(db)
+    if status_filter == "pending" or status_filter is None:
+        return await service.get_pending_enrollments(current_user.id, subject_id)
+    # For other statuses, return a filtered list
+    return await service.get_pending_enrollments(current_user.id, subject_id)
+
+
+@router.post("/{subject_id}/enrollments/{enrollment_id}/approve")
+async def approve_enrollment(
+    subject_id: uuid.UUID,
+    enrollment_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Approve a pending enrollment request (teacher only)."""
+    service = GamificationService(db)
+    try:
+        enrollment = await service.approve_enrollment(enrollment_id, current_user.id)
+        return {"message": "Enrollment approved", "enrollment_id": str(enrollment.id), "status": enrollment.status}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/{subject_id}/enrollments/{enrollment_id}/reject")
+async def reject_enrollment(
+    subject_id: uuid.UUID,
+    enrollment_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Reject a pending enrollment request (teacher only)."""
+    service = GamificationService(db)
+    try:
+        enrollment = await service.reject_enrollment(enrollment_id, current_user.id)
+        return {"message": "Enrollment rejected", "enrollment_id": str(enrollment.id), "status": enrollment.status}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # ============== Topic Endpoints ==============
@@ -759,3 +861,298 @@ async def extract_chapters_from_syllabus(
         "chapters_created": len(created_topics),
         "topics": [TopicResponse.model_validate(t) for t in created_topics],
     }
+
+
+@router.post("/{subject_id}/generate-learning-content")
+async def generate_learning_content(
+    subject_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Generate learning content (.md) for ALL topics using LLM + RAG.
+    Uses hybrid_search + embeddings + cosine similarity from reference documents.
+    Processes topics sequentially.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    # Verify subject ownership
+    result = await db.execute(
+        select(Subject).where(
+            Subject.id == subject_id,
+            Subject.user_id == current_user.id,
+        )
+    )
+    subject = result.scalar_one_or_none()
+    if not subject:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Subject not found",
+        )
+
+    # Get all topics
+    result = await db.execute(
+        select(Topic)
+        .where(Topic.subject_id == subject_id)
+        .order_by(Topic.order_index)
+    )
+    topics = result.scalars().all()
+
+    if not topics:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No topics found. Add topics before generating content.",
+        )
+
+    # Gather reference document IDs for RAG
+    from app.models.document import Document
+    ref_result = await db.execute(
+        select(Document.id).where(
+            Document.subject_id == subject_id,
+            Document.index_type.in_(["primary", "reference_book", "template_paper"]),
+            Document.processing_status == "completed",
+        )
+    )
+    doc_ids = [row[0] for row in ref_result.all()]
+
+    # Initialize services for RAG
+    from app.services.llm_service import LLMService
+    from app.services.document_service import DocumentService
+    from app.services.embedding_service import EmbeddingService
+
+    llm = LLMService()
+    doc_service = DocumentService(db)
+    embedding_service = EmbeddingService()
+
+    topic_names = [t.name for t in topics]
+    topic_list_str = "\n".join(f"{i+1}. {name}" for i, name in enumerate(topic_names))
+
+    system_prompt = f"""You are an expert educational content writer creating comprehensive learning materials for a university-level subject.
+
+Subject: {subject.name} ({subject.code})
+All topics: {topic_list_str}
+
+Write in clear, well-structured Markdown format suitable for students to study from.
+Include:
+- Key concepts and definitions
+- Important formulas or principles (if applicable)
+- Examples where helpful
+- Summary points at the end
+
+Write content that is educational, accurate, and student-friendly.
+Do NOT mention source documents or references. Write as standalone educational content."""
+
+    generated_topics = []
+    errors = []
+
+    # Generate content for each topic sequentially using RAG
+    for topic in topics:
+        if topic.has_syllabus and topic.syllabus_content and len(topic.syllabus_content) > 100:
+            generated_topics.append({
+                "topic_id": str(topic.id), "topic_name": topic.name,
+                "status": "skipped", "reason": "Already has content",
+            })
+            continue
+
+        # --- RAG: Retrieve relevant context using hybrid search ---
+        rag_context = ""
+        if doc_ids:
+            try:
+                query = f"{topic.name} {topic.description or ''} {subject.name}"
+                query_embedding = await embedding_service.get_embedding(query)
+                relevant_chunks = await doc_service.hybrid_search_multi_document(
+                    document_ids=doc_ids,
+                    query=query,
+                    query_embedding=query_embedding,
+                    top_k=8,
+                    alpha=0.6,
+                )
+                if relevant_chunks:
+                    rag_context = "\n\n".join([
+                        f"[Source: {c.document.filename if c.document else 'unknown'}, Page {c.page_number or '?'}]\n{c.chunk_text}"
+                        for c in relevant_chunks
+                    ])
+            except Exception as e:
+                logger.warning(f"RAG retrieval failed for topic {topic.name}: {e}")
+
+        prompt = f"""Generate comprehensive learning content for this topic:
+
+**Topic: {topic.name}**
+{f'Description: {topic.description}' if topic.description else ''}
+
+{f'--- Relevant Reference Material ---{chr(10)}{rag_context}' if rag_context else ''}
+
+Write a comprehensive study guide for "{topic.name}" in Markdown format.
+Include headings, bullet points, and clear explanations.
+The content should be 800-1500 words, thorough enough for a student to learn the topic."""
+
+        try:
+            content = await llm.generate(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                temperature=0.5,
+                max_tokens=4000,
+            )
+            topic.syllabus_content = content.strip()
+            topic.has_syllabus = True
+            generated_topics.append({
+                "topic_id": str(topic.id), "topic_name": topic.name,
+                "status": "generated", "content_length": len(content),
+            })
+        except Exception as e:
+            logger.error(f"Failed to generate content for topic {topic.name}: {e}")
+            errors.append({"topic_id": str(topic.id), "topic_name": topic.name, "error": str(e)})
+
+    # Update syllabus coverage
+    topics_with_syllabus = sum(1 for t in topics if t.has_syllabus)
+    if len(topics) > 0:
+        subject.syllabus_coverage = int((topics_with_syllabus / len(topics)) * 100)
+
+    await db.commit()
+
+    return {
+        "message": f"Generated content for {len([t for t in generated_topics if t['status'] == 'generated'])} topics",
+        "generated": generated_topics,
+        "errors": errors,
+        "syllabus_coverage": subject.syllabus_coverage,
+    }
+
+
+@router.post("/{subject_id}/topics/{topic_id}/generate-content")
+async def generate_topic_content(
+    subject_id: uuid.UUID,
+    topic_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Generate learning content (.md) for a SINGLE topic using LLM + RAG pipeline.
+    Uses hybrid_search + embeddings + cosine similarity from reference documents.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    # Verify subject ownership
+    result = await db.execute(
+        select(Subject).where(Subject.id == subject_id, Subject.user_id == current_user.id)
+    )
+    subject = result.scalar_one_or_none()
+    if not subject:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subject not found")
+
+    # Get the topic
+    result = await db.execute(
+        select(Topic).where(Topic.id == topic_id, Topic.subject_id == subject_id)
+    )
+    topic = result.scalar_one_or_none()
+    if not topic:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Topic not found")
+
+    # Get all topic names for context
+    all_topics_result = await db.execute(
+        select(Topic.name).where(Topic.subject_id == subject_id).order_by(Topic.order_index)
+    )
+    all_topic_names = [row[0] for row in all_topics_result.all()]
+    topic_list_str = "\n".join(f"{i+1}. {name}" for i, name in enumerate(all_topic_names))
+
+    # Gather reference document IDs for RAG
+    from app.models.document import Document
+    ref_result = await db.execute(
+        select(Document.id).where(
+            Document.subject_id == subject_id,
+            Document.index_type.in_(["primary", "reference_book", "template_paper"]),
+            Document.processing_status == "completed",
+        )
+    )
+    doc_ids = [row[0] for row in ref_result.all()]
+
+    # Initialize services
+    from app.services.llm_service import LLMService
+    from app.services.document_service import DocumentService
+    from app.services.embedding_service import EmbeddingService
+
+    llm = LLMService()
+    doc_service = DocumentService(db)
+    embedding_service = EmbeddingService()
+
+    # --- RAG: Retrieve relevant context ---
+    rag_context = ""
+    if doc_ids:
+        try:
+            query = f"{topic.name} {topic.description or ''} {subject.name}"
+            query_embedding = await embedding_service.get_embedding(query)
+            relevant_chunks = await doc_service.hybrid_search_multi_document(
+                document_ids=doc_ids,
+                query=query,
+                query_embedding=query_embedding,
+                top_k=10,
+                alpha=0.6,
+            )
+            if relevant_chunks:
+                rag_context = "\n\n".join([
+                    f"[Source: {c.document.filename if c.document else 'unknown'}, Page {c.page_number or '?'}]\n{c.chunk_text}"
+                    for c in relevant_chunks
+                ])
+        except Exception as e:
+            logger.warning(f"RAG retrieval failed for topic {topic.name}: {e}")
+
+    system_prompt = f"""You are an expert educational content writer. Create comprehensive, well-structured learning materials in Markdown format.
+
+Subject: {subject.name} ({subject.code})
+All topics: {topic_list_str}
+
+Guidelines:
+- Use clear headings (## and ###), bullet points, and numbered lists
+- Include key concepts, definitions, formulas (if applicable), and examples
+- Add a summary section at the end
+- Write 800-1500 words of thorough, student-friendly educational content
+- Do NOT mention source documents or references"""
+
+    prompt = f"""Generate comprehensive learning content for this topic:
+
+**Topic: {topic.name}**
+{f'Description: {topic.description}' if topic.description else ''}
+
+{f'--- Relevant Reference Material ---{chr(10)}{rag_context}' if rag_context else ''}
+
+Write a comprehensive study guide for "{topic.name}" in Markdown format."""
+
+    try:
+        content = await llm.generate(
+            prompt=prompt,
+            system_prompt=system_prompt,
+            temperature=0.5,
+            max_tokens=4000,
+        )
+        topic.syllabus_content = content.strip()
+        topic.has_syllabus = True
+
+        # Update syllabus coverage
+        total_topics_result = await db.execute(
+            select(func.count()).where(Topic.subject_id == subject_id)
+        )
+        total_topics = total_topics_result.scalar_one()
+        with_syllabus_result = await db.execute(
+            select(func.count()).where(Topic.subject_id == subject_id, Topic.has_syllabus == True)
+        )
+        with_syllabus = with_syllabus_result.scalar_one()
+        if total_topics > 0:
+            subject.syllabus_coverage = int((with_syllabus / total_topics) * 100)
+
+        await db.commit()
+
+        return {
+            "topic_id": str(topic.id),
+            "topic_name": topic.name,
+            "status": "generated",
+            "content_length": len(content),
+            "content_preview": content[:300],
+            "syllabus_coverage": subject.syllabus_coverage,
+        }
+    except Exception as e:
+        logger.error(f"Failed to generate content for topic {topic.name}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Content generation failed: {str(e)}",
+        )

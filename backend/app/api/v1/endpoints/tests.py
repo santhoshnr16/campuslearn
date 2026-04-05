@@ -114,6 +114,9 @@ async def get_test(
         raise HTTPException(status_code=404, detail="Test not found")
 
     questions = await service.get_test_questions(test_id)
+    
+    # Get submissions count
+    submissions_count = await service.get_submissions_count(test_id)
 
     return TestDetailResponse(
         id=test.id,
@@ -134,6 +137,7 @@ async def get_test(
         created_at=test.created_at,
         updated_at=test.updated_at,
         questions=questions,
+        submissions_count=submissions_count,
     )
 
 

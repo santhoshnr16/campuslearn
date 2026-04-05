@@ -10,21 +10,22 @@ import {
   TextInput,
   TouchableOpacity,
   Alert,
-  KeyboardAvoidingView,
   Platform,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { Colors, Spacing, FontSizes, BorderRadius } from '@/constants/theme';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { GlassCard } from '@/components/ui/glass-card';
+import { NativeButton } from '@/components/ui/native-button';
 import { testsService } from '@/services/tests';
 
 export default function EditQuestionScreen() {
   const colorScheme = useColorScheme() ?? 'light';
   const colors = Colors[colorScheme];
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const {
     testId,
     testQuestionId,
@@ -74,12 +75,12 @@ export default function EditQuestionScreen() {
   };
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]} edges={['bottom']}>
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
       >
-        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           {/* Question Text */}
           <GlassCard style={styles.card}>
             <Text style={[styles.label, { color: colors.text }]}>Question Text</Text>
@@ -197,34 +198,35 @@ export default function EditQuestionScreen() {
               maxLength={3}
             />
           </GlassCard>
-        </ScrollView>
 
         {/* Save Button */}
-        <View style={[styles.bottomBar, { backgroundColor: colors.card, borderTopColor: colors.border }]}>
-          <TouchableOpacity
-            style={[styles.cancelButton, { borderColor: colors.border }]}
+        <View style={[styles.bottomBar, { paddingBottom: insets.bottom + Spacing.md }]}>
+          <NativeButton
+            title="Cancel"
+            variant="secondary"
+            size="medium"
             onPress={() => router.back()}
-          >
-            <Text style={[styles.cancelText, { color: colors.text }]}>Cancel</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.saveButton, { backgroundColor: colors.primary, opacity: isSaving ? 0.6 : 1 }]}
+          />
+          <NativeButton
+            title={isSaving ? 'Saving...' : 'Save Changes'}
+            variant="primary"
+            size="medium"
+            icon="checkmark"
+            iconPosition="left"
             onPress={handleSave}
+            loading={isSaving}
             disabled={isSaving}
-          >
-            <IconSymbol name="checkmark" size={16} color="#FFF" />
-            <Text style={styles.saveText}>{isSaving ? 'Saving...' : 'Save Changes'}</Text>
-          </TouchableOpacity>
+          />
         </View>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+      </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
   flex: { flex: 1 },
-  content: { padding: Spacing.md, paddingBottom: 120, gap: Spacing.md },
+  scrollContent: { padding: Spacing.md, paddingTop: 100, paddingBottom: 120, gap: Spacing.md },
   card: { padding: Spacing.md, gap: 8 },
   label: { fontSize: FontSizes.sm, fontWeight: '600' },
   textArea: {
@@ -288,31 +290,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-end',
-    padding: Spacing.md,
-    borderTopWidth: 1,
+    paddingBottom: Spacing.xxxl,
     gap: Spacing.sm,
-  },
-  cancelButton: {
     paddingHorizontal: Spacing.md,
-    paddingVertical: 10,
-    borderRadius: BorderRadius.md,
-    borderWidth: 1,
-  },
-  cancelText: {
-    fontSize: FontSizes.sm,
-    fontWeight: '500',
-  },
-  saveButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: 10,
-    borderRadius: BorderRadius.md,
-  },
-  saveText: {
-    color: '#FFF',
-    fontSize: FontSizes.sm,
-    fontWeight: '600',
+    paddingVertical: Spacing.md,
   },
 });

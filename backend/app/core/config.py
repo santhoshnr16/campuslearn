@@ -83,7 +83,6 @@ class Settings(BaseSettings):
     RERANKER_ENABLED: bool = Field(default=True)
 
     # Question Generation
-    MAX_QUESTIONS_PER_REQUEST: int = Field(default=50)
     CHUNK_SIZE: int = Field(default=1000)
     CHUNK_OVERLAP: int = Field(default=200)
 

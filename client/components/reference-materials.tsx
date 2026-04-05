@@ -49,7 +49,7 @@ export function ReferenceMaterials({
   const [processingStatus, setProcessingStatus] = useState<DocumentStatus | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [isPickingDocument, setIsPickingDocument] = useState(false);
-  
+
   const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const progressAnim = useRef(new Animated.Value(0)).current;
 
@@ -85,7 +85,7 @@ export function ReferenceMaterials({
   const pollProcessingStatus = useCallback(
     (documentId: string) => {
       if (pollingRef.current) clearInterval(pollingRef.current);
-      
+
       pollingRef.current = setInterval(async () => {
         try {
           const status = await referencesService.getDocumentStatus(documentId);
@@ -169,7 +169,7 @@ export function ReferenceMaterials({
       // Upload done, now poll for processing status
       setUploadProgress('Processing document...');
       setUploadPercent(0);
-      
+
       if (response.status === 'completed') {
         showSuccess('Reference book uploaded and processed');
         onRefresh();
@@ -250,7 +250,7 @@ export function ReferenceMaterials({
 
       setUploadProgress('Processing document...');
       setUploadPercent(0);
-      
+
       if (response.status === 'completed') {
         showSuccess('Template paper uploaded and processed');
         onRefresh();
@@ -440,8 +440,30 @@ export function ReferenceMaterials({
               {doc.processing_status}
             </Text>
           </View>
+          {doc.is_public && (
+            <View style={[styles.statusBadge, { backgroundColor: '#34C759' + '20', marginLeft: 4 }]}>
+              <Text style={[styles.statusText, { color: '#34C759' }]}>shared</Text>
+            </View>
+          )}
         </View>
       </View>
+      <TouchableOpacity
+        style={[styles.deleteButton, { marginRight: 8 }]}
+        onPress={async () => {
+          try {
+            await referencesService.toggleVisibility(doc.id);
+            onRefresh();
+          } catch {
+            Alert.alert('Error', 'Failed to toggle visibility');
+          }
+        }}
+      >
+        <IconSymbol
+          name={doc.is_public ? "eye.fill" : "eye.slash.fill"}
+          size={18}
+          color={doc.is_public ? '#34C759' : colors.textSecondary}
+        />
+      </TouchableOpacity>
       <TouchableOpacity
         style={styles.deleteButton}
         onPress={() => handleDeleteReference(doc)}
@@ -508,8 +530,8 @@ export function ReferenceMaterials({
             {processingStatus
               ? `${processingStatus.processing_progress}%${processingStatus.total_pages ? ` • ${processingStatus.total_pages} pages` : ''}`
               : uploadPercent > 0
-              ? `${uploadPercent}%`
-              : ''}
+                ? `${uploadPercent}%`
+                : ''}
           </Text>
         </View>
       )}
