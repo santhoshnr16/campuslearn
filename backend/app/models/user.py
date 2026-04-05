@@ -4,9 +4,9 @@ User database model.
 
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import String, Boolean, Integer, DateTime, Text, Float, func
+from sqlalchemy import String, Boolean, Integer, DateTime, Text, Float, func, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import UUID
 import uuid
 
 from app.core.database import Base
@@ -61,13 +61,11 @@ class User(Base):
     last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     
     # Preferences
-    preferences: Mapped[Optional[dict]] = mapped_column(JSONB, default={})
-    
-
+    preferences: Mapped[Optional[dict]] = mapped_column(JSON, default={})
     
     # Subject-level Reference Materials (stored per subject)
     # Format: {"subject_id": {"reference_books": [...], "template_papers": [...]}}
-    subject_reference_materials: Mapped[Optional[dict]] = mapped_column(JSONB, default={})
+    subject_reference_materials: Mapped[Optional[dict]] = mapped_column(JSON, default={})
     
     # Relationships
     documents = relationship("Document", back_populates="user", cascade="all, delete-orphan")

@@ -4,9 +4,9 @@ Gamification database models for the learning platform.
 
 from datetime import datetime, date
 from typing import Optional
-from sqlalchemy import String, Integer, Float, Boolean, DateTime, Date, Text, ForeignKey, func, UniqueConstraint
+from sqlalchemy import String, Integer, Float, Boolean, DateTime, Date, Text, ForeignKey, func, UniqueConstraint, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import UUID
 import uuid
 
 from app.core.database import Base
@@ -115,7 +115,7 @@ class TestHistory(Base):
     difficulty: Mapped[str] = mapped_column(String(20), default="easy")
     
     # Answers detail
-    answers: Mapped[Optional[dict]] = mapped_column(JSONB)  # [{question_id, selected, correct, xp}]
+    answers: Mapped[Optional[dict]] = mapped_column(JSON)  # [{question_id, selected, correct, xp}]
     
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(

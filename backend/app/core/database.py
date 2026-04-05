@@ -41,8 +41,9 @@ Base = declarative_base()
 async def init_db():
     """Initialize database and create tables."""
     async with engine.begin() as conn:
-        # Enable pgvector extension
-        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        # Enable pgvector extension (only for PostgreSQL)
+        if "postgresql" in settings.DATABASE_URL:
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         # Create all tables
         await conn.run_sync(Base.metadata.create_all)
     

@@ -99,6 +99,26 @@ app.add_middleware(
 # Request ID middleware for tracing — implemented as a pure ASGI middleware to
 # avoid the BaseHTTPMiddleware task-isolation issue that can leave SQLAlchemy
 # connections unchecked-in when a request is cancelled (client disconnect).
+class RequestLoggingMiddleware:
+    """Log all incoming requests for debugging."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        # Log request details
+        method = scope.get("method", "UNKNOWN")
+        path = scope.get("path", "/")
+        client_host = scope.get("client", ["unknown", 0])[0]
+        logger.info(f"[REQUEST] {method} {path} from {client_host}")
+
+        await self.app(scope, receive, send)
+
+
 class RequestIDMiddleware:
     """Inject a unique X-Request-ID header into every HTTP request/response."""
 
@@ -125,6 +145,7 @@ class RequestIDMiddleware:
         await self.app(scope, receive, send_with_request_id)
 
 
+app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(RequestIDMiddleware)
 
 

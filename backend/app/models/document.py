@@ -4,9 +4,9 @@ Document and DocumentChunk database models.
 
 from datetime import datetime
 from typing import Optional, List
-from sqlalchemy import String, Integer, BigInteger, DateTime, Text, ForeignKey, func
+from sqlalchemy import String, Integer, BigInteger, DateTime, Text, ForeignKey, func, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY
+from sqlalchemy.dialects.postgresql import UUID, ARRAY
 from pgvector.sqlalchemy import Vector
 import uuid
 
@@ -54,7 +54,7 @@ class Document(Base):
     processed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     
     # Metadata
-    document_metadata: Mapped[Optional[dict]] = mapped_column(JSONB)
+    document_metadata: Mapped[Optional[dict]] = mapped_column(JSON)
     
     # Sharing (optional feature)
     is_public: Mapped[bool] = mapped_column(default=False)
@@ -91,7 +91,7 @@ class DocumentChunk(Base):
     token_count: Mapped[Optional[int]] = mapped_column(Integer)
     page_number: Mapped[Optional[int]] = mapped_column(Integer)
     section_heading: Mapped[Optional[str]] = mapped_column(String(500))
-    chunk_metadata: Mapped[Optional[dict]] = mapped_column(JSONB)
+    chunk_metadata: Mapped[Optional[dict]] = mapped_column(JSON)
     
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(

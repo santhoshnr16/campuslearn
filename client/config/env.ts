@@ -15,14 +15,14 @@
 export const ENV_CONFIG = {
   // Development machine IP address (for physical device testing)
   // Default: 10.141.7.200
-  DEV_MACHINE_IP: process.env.EXPO_PUBLIC_DEV_MACHINE_IP || '10.0.0.8',
+  DEV_MACHINE_IP: process.env.EXPO_PUBLIC_DEV_MACHINE_IP || 'host.docker.internal',
   
   // Use iOS Simulator (set to 'true' for simulator, 'false' for physical device)
   // Default: false
-  USE_SIMULATOR: process.env.EXPO_PUBLIC_USE_SIMULATOR || 'true',
+  USE_SIMULATOR: process.env.EXPO_PUBLIC_USE_SIMULATOR || 'false',
 
   // Production API URL (configurable via .env)
-  PRODUCTION_API_URL: process.env.EXPO_PUBLIC_PRODUCTION_API_URL || 'https://qglm.shrishesha.space/api/v1',
+  PRODUCTION_API_URL: process.env.EXPO_PUBLIC_PRODUCTION_API_URL || '',
 
   // Set to 'true' to use production API even in dev mode
   USE_PRODUCTION_API: process.env.EXPO_PUBLIC_USE_PRODUCTION_API || 'false',

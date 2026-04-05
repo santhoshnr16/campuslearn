@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.config import settings
+from app.core.logging import logger
 from app.schemas.user import UserCreate, UserLogin, UserUpdate, UserResponse
 from app.schemas.auth import (
     Token,
@@ -38,6 +39,9 @@ async def register(
     """
     Register a new user account.
     """
+    logger.info(f"[AUTH] Register request received from {request.client.host if request.client else 'unknown'}")
+    logger.info(f"[AUTH] User data: email={user_data.email}, username={user_data.username}")
+    
     user_service = UserService(db)
     client_info = get_client_info(request)
     

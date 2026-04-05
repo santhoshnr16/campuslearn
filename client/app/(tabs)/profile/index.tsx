@@ -212,11 +212,15 @@ export default function ProfileScreen() {
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1 },
-  content: { paddingBottom: 100 },
+  content: { 
+    paddingTop: 100,
+    paddingBottom: 100,
+  },
   profileHeader: {
     alignItems: 'center',
-    paddingTop: Spacing.xl,
+    paddingTop: 150,
     paddingBottom: Spacing.lg,
+    marginTop: Spacing.xl,
   },
   avatarGradient: {
     width: 80,

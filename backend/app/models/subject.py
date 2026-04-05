@@ -4,9 +4,9 @@ Subject and Topic database models.
 
 from datetime import datetime
 from typing import Optional, List
-from sqlalchemy import String, Integer, DateTime, Text, ForeignKey, func, Boolean
+from sqlalchemy import String, Integer, DateTime, Text, ForeignKey, func, Boolean, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY
+from sqlalchemy.dialects.postgresql import UUID, ARRAY
 import uuid
 
 from app.core.database import Base
@@ -30,10 +30,10 @@ class Subject(Base):
     description: Mapped[Optional[str]] = mapped_column(Text)
     
     # Learning Outcomes
-    learning_outcomes: Mapped[Optional[dict]] = mapped_column(JSONB)  # List of LOs with descriptions
+    learning_outcomes: Mapped[Optional[dict]] = mapped_column(JSON)  # List of LOs with descriptions
     
     # Course Outcomes for OBE mapping
-    course_outcomes: Mapped[Optional[dict]] = mapped_column(JSONB)  # CO1-CO5 definitions
+    course_outcomes: Mapped[Optional[dict]] = mapped_column(JSON)  # CO1-CO5 definitions
     
     # Stats (denormalized for performance)
     total_questions: Mapped[int] = mapped_column(Integer, default=0)
@@ -85,7 +85,7 @@ class Topic(Base):
     syllabus_file_path: Mapped[Optional[str]] = mapped_column(String(500))
     
     # Learning Outcomes mapping for this topic
-    learning_outcome_mappings: Mapped[Optional[dict]] = mapped_column(JSONB)
+    learning_outcome_mappings: Mapped[Optional[dict]] = mapped_column(JSON)
     
     # Stats
     total_questions: Mapped[int] = mapped_column(Integer, default=0)

@@ -10,6 +10,7 @@ from typing import Optional, List, BinaryIO
 from pathlib import Path
 import uuid
 import aiofiles
+import fitz  # PyMuPDF
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -396,7 +397,6 @@ class DocumentService:
             "blocks": [{"text": str, "position": {"top": float, "left": float, "bottom": float, "right": float}}]
         }
         """
-        import fitz  # PyMuPDF
         from pathlib import Path
 
         document_name = Path(file_path).stem

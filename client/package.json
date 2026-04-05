@@ -3,7 +3,7 @@
   "main": "expo-router/entry",
   "version": "1.0.0",
   "scripts": {
-    "start": "expo start",
+    "start": "npm run sync-env && expo start -c",
     "sync-env": "node ./scripts/sync-env.js",
     "reset-project": "node ./scripts/reset-project.js",
     "android": "expo run:android",

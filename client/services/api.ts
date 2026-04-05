@@ -55,6 +55,51 @@ export const apiClient = axios.create({
   },
 });
 
+// Add request interceptor for debugging
+apiClient.interceptors.request.use(
+  (config) => {
+    console.log('[API Request]', {
+      method: config.method?.toUpperCase(),
+      url: config.url,
+      baseURL: config.baseURL,
+      fullURL: `${config.baseURL}${config.url}`,
+      data: config.data,
+      headers: config.headers,
+    });
+    return config;
+  },
+  (error) => {
+    console.error('[API Request Error]', error);
+    return Promise.reject(error);
+  }
+);
+
+// Add response interceptor for debugging
+apiClient.interceptors.response.use(
+  (response) => {
+    console.log('[API Response]', {
+      status: response.status,
+      url: response.config.url,
+      baseURL: response.config.baseURL,
+      fullURL: `${response.config.baseURL}${response.config.url}`,
+      data: response.data,
+    });
+    return response;
+  },
+  (error) => {
+    console.error('[API Response Error]', {
+      message: error.message,
+      code: error.code,
+      status: error.response?.status,
+      url: error.config?.url,
+      baseURL: error.config?.baseURL,
+      fullURL: error.config ? `${error.config.baseURL}${error.config.url}` : 'unknown',
+      response: error.response?.data,
+    });
+    return Promise.reject(error);
+  }
+);
+
 // Token management functions
 export const tokenStorage = {
   async getAccessToken(): Promise<string | null> {

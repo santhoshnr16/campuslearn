@@ -4,9 +4,9 @@ Authentication-related database models.
 
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import String, Boolean, DateTime, Text, ForeignKey, func
+from sqlalchemy import String, Boolean, DateTime, Text, ForeignKey, func, JSON
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.dialects.postgresql import UUID, JSONB, INET
+from sqlalchemy.dialects.postgresql import UUID, INET
 import uuid
 
 from app.core.database import Base
@@ -75,7 +75,7 @@ class AuditLog(Base):
     http_method: Mapped[Optional[str]] = mapped_column(String(10))
     
     # Details
-    event_data: Mapped[Optional[dict]] = mapped_column(JSONB)
+    event_data: Mapped[Optional[dict]] = mapped_column(JSON)
     success: Mapped[bool] = mapped_column(Boolean, default=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text)
     
